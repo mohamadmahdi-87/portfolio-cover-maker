@@ -1,0 +1,10 @@
+RewriteEngine On
+
+# Serve built assets from Vite's output directory.
+RewriteRule ^dist/ - [END]
+RewriteCond %{DOCUMENT_ROOT}/dist/$1 -f
+RewriteRule ^(.+)$ dist/$1 [END]
+
+# Serve the built app for the root and client-side routes.
+RewriteRule ^$ dist/index.html [END]
+RewriteRule ^.*$ dist/index.html [END]

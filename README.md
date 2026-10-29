@@ -45,3 +45,22 @@ See the installation and usage instructions below.
 Created by a freelancer, for freelancers.
 
 [Creator's website](https://webzad.ir)
+
+## Run locally
+
+Requirements: Node.js 20.19+ (or 22.12+) and npm.
+
+```bash
+npm install
+npm run dev
+```
+
+Vite prints the local address. The app runs in your browser and stores project data in that browser's IndexedDB; it has no backend and does not upload images.
+
+To build the app:
+
+```bash
+npm run build
+```
+
+For sample input images, run `node scripts/create-test-fixtures.mjs`; the generated fixtures are already included under `public/test-fixtures/`.
