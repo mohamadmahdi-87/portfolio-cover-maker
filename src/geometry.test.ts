@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createDefaultLayer } from "./defaults";
-import { naturalImageRect, outputDimensions, safeCanvasPoint, validateImageDimensions } from "./geometry";
+import { imageClipRect, naturalImageRect, outputDimensions, safeCanvasPoint, validateImageDimensions } from "./geometry";
 
 describe("cover geometry", () => {
   it("scales exact export dimensions", () => {
@@ -36,5 +36,16 @@ describe("cover geometry", () => {
       x: 540,
       y: 424,
     });
+  });
+
+  it("uses the social template's square canvas for export, clipping, and pointer mapping", () => {
+    const projectId = "instagram-feed" as const;
+    expect(outputDimensions(1, projectId)).toEqual({ width: 1080, height: 1080 });
+    expect(outputDimensions(3, projectId)).toEqual({ width: 3240, height: 3240 });
+    expect(safeCanvasPoint(250, 250, { left: 0, top: 0, width: 500, height: 500 } as DOMRect, projectId)).toEqual({ x: 540, y: 540 });
+    const layer = { ...createDefaultLayer("front", projectId), contentOffsetY: 90 };
+    const rect = naturalImageRect(layer, { id: "social-shot", name: "shot.png", mime: "image/png", width: 500, height: 1800, size: 10 }, projectId);
+    expect(rect).toEqual({ x: 465, y: 155, width: 425, height: 1530 });
+    expect(imageClipRect(layer, projectId)).toEqual({ x: -1080, y: 245, width: 3240, height: 835 });
   });
 });

@@ -1,5 +1,6 @@
 import { openDB, type DBSchema } from "idb";
 import type { AssetMeta, BrandSettings, ProjectState } from "./model";
+import { migrateProject } from "./project-validation";
 
 interface WebzadDB extends DBSchema {
   projects: { key: string; value: ProjectState };
@@ -23,9 +24,15 @@ export const saveProject = async (project: ProjectState) => {
   await db.put("projects", project);
 };
 
-export const loadProject = async (id: string) => (await database).get("projects", id);
+export const loadProject = async (id: string): Promise<ProjectState | undefined> => {
+  const project: unknown = await (await database).get("projects", id);
+  return migrateProject(project) ?? undefined;
+};
 
-export const listProjects = async () => (await database).getAll("projects");
+export const listProjects = async (): Promise<ProjectState[]> => {
+  const stored: unknown[] = await (await database).getAll("projects");
+  return stored.map(migrateProject).filter((project): project is ProjectState => project !== null);
+};
 
 export const removeProject = async (id: string) => {
   const db = await database;
@@ -71,6 +78,7 @@ export const collectOrphanAssets = async () => {
   for (const project of projects) {
     add(project.front.asset);
     add(project.back.asset);
+    add(project.coverPreview);
     for (const item of project.customTech) add(item.asset);
   }
   add(settings?.brand?.logo);

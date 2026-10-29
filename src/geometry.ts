@@ -1,6 +1,4 @@
 import {
-  CANVAS_HEIGHT,
-  CANVAS_WIDTH,
   MAX_IMAGE_DIMENSION,
   MAX_IMAGE_PIXELS,
   type AssetMeta,
@@ -8,36 +6,51 @@ import {
   type ImageLayer,
   type Point,
   type Rect,
+  type CoverTemplateId,
 } from "./model";
+import { getTemplateDefinition } from "./templates";
 
 export const clamp = (value: number, min: number, max: number): number =>
   Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
 
-export const safeCanvasPoint = (clientX: number, clientY: number, rect: DOMRect): Point => ({
-  x: clamp(((clientX - rect.left) / Math.max(rect.width, 1)) * CANVAS_WIDTH, 0, CANVAS_WIDTH),
-  y: clamp(((clientY - rect.top) / Math.max(rect.height, 1)) * CANVAS_HEIGHT, 0, CANVAS_HEIGHT),
-});
+export const safeCanvasPoint = (
+  clientX: number,
+  clientY: number,
+  rect: DOMRect,
+  templateId: CoverTemplateId = "web-cover",
+): Point => {
+  const { width, height } = getTemplateDefinition(templateId);
+  return {
+    x: clamp(((clientX - rect.left) / Math.max(rect.width, 1)) * width, 0, width),
+    y: clamp(((clientY - rect.top) / Math.max(rect.height, 1)) * height, 0, height),
+  };
+};
 
-export const outputDimensions = (scale: ExportScale) => ({
-  width: CANVAS_WIDTH * scale,
-  height: CANVAS_HEIGHT * scale,
-});
+export const outputDimensions = (scale: ExportScale, templateId: CoverTemplateId = "web-cover") => {
+  const { width, height } = getTemplateDefinition(templateId);
+  return { width: width * scale, height: height * scale };
+};
 
-export const naturalImageRect = (layer: ImageLayer, asset: AssetMeta): Rect => ({
-  x: layer.x,
-  y: layer.y - clamp(layer.contentOffsetY, 0, MAX_IMAGE_DIMENSION),
-  width: clamp(layer.width, 1, CANVAS_WIDTH * 2),
-  height:
-    (asset.height / asset.width) *
-    clamp(layer.width, 1, CANVAS_WIDTH * 2),
-});
+export const naturalImageRect = (layer: ImageLayer, asset: AssetMeta, templateId: CoverTemplateId = "web-cover"): Rect => {
+  const { width } = getTemplateDefinition(templateId);
+  const layerWidth = clamp(layer.width, 1, width * 2);
+  return {
+    x: layer.x,
+    y: layer.y - clamp(layer.contentOffsetY, 0, MAX_IMAGE_DIMENSION),
+    width: layerWidth,
+    height: (asset.height / asset.width) * layerWidth,
+  };
+};
 
-export const imageClipRect = (layer: ImageLayer): Rect => ({
-  x: -CANVAS_WIDTH,
-  y: clamp(layer.y, 0, CANVAS_HEIGHT),
-  width: CANVAS_WIDTH * 3,
-  height: CANVAS_HEIGHT - clamp(layer.y, 0, CANVAS_HEIGHT),
-});
+export const imageClipRect = (layer: ImageLayer, templateId: CoverTemplateId = "web-cover"): Rect => {
+  const { width, height } = getTemplateDefinition(templateId);
+  return {
+    x: -width,
+    y: clamp(layer.y, 0, height),
+    width: width * 3,
+    height: height - clamp(layer.y, 0, height),
+  };
+};
 
 export const validateImageDimensions = (width: number, height: number): string | null => {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width < 1 || height < 1) {

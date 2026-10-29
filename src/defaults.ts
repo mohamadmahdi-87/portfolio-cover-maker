@@ -1,5 +1,6 @@
-import type { BrandSettings, ImageLayer, ProjectState } from "./model";
+import type { BrandSettings, CoverTemplateId, ImageLayer, ProjectState } from "./model";
 import { SCHEMA_VERSION } from "./model";
+import { getTemplateDefinition } from "./templates";
 
 export const DEFAULT_SHADOW = {
   enabled: true,
@@ -19,12 +20,12 @@ export const DEFAULT_WEBZAD_LOGO = {
   size: 6534,
 };
 
-export const createDefaultLayer = (kind: "front" | "back"): ImageLayer => ({
+export const createDefaultLayer = (kind: "front" | "back", templateId: CoverTemplateId = "web-cover"): ImageLayer => ({
   asset: null,
   visible: true,
-  x: kind === "front" ? 409 : 588,
-  y: kind === "front" ? 150 : 0,
-  width: kind === "front" ? 484 : 466,
+  x: getTemplateDefinition(templateId).layers[kind].x,
+  y: getTemplateDefinition(templateId).layers[kind].y,
+  width: getTemplateDefinition(templateId).layers[kind].width,
   contentOffsetY: 0,
   shadow: {
     ...DEFAULT_SHADOW,
@@ -39,7 +40,11 @@ export const createDefaultBrand = (): BrandSettings => ({
   logo: { ...DEFAULT_WEBZAD_LOGO },
   logoDefaultApplied: true,
   logoVisible: true,
-  logoBox: { x: 40, y: 75, width: 335, height: 220 },
+  logoBox: { ...getTemplateDefinition("web-cover").logoBox },
+  logoBoxes: {
+    "web-cover": { ...getTemplateDefinition("web-cover").logoBox },
+    "instagram-feed": { ...getTemplateDefinition("instagram-feed").logoBox },
+  },
   logoOpacity: 0.04,
   signature: {
     text: "Designed by Webzad",
@@ -47,13 +52,57 @@ export const createDefaultBrand = (): BrandSettings => ({
     y: 766,
     fontSize: 27,
     color: "#707070",
+    positions: {
+      "web-cover": { x: 50, y: 766 },
+      "instagram-feed": { x: 50, y: getTemplateDefinition("instagram-feed").height - getTemplateDefinition("instagram-feed").signature.bottom },
+    },
   },
   iconSize: 58,
   iconGap: 12,
+  iconSizes: { "web-cover": 58, "instagram-feed": 68 },
+  iconGaps: { "web-cover": 12, "instagram-feed": 14 },
 });
 
-export const createDefaultProject = (name = "پروژهٔ جدید"): ProjectState => ({
+export const migrateBrandSettings = (brand: BrandSettings | null | undefined): BrandSettings => {
+  if (!brand) return createDefaultBrand();
+  const web = getTemplateDefinition("web-cover");
+  const social = getTemplateDefinition("instagram-feed");
+  return {
+    ...brand,
+    schemaVersion: SCHEMA_VERSION,
+    iconSizes: {
+      ...brand.iconSizes,
+      "web-cover": brand.iconSizes?.["web-cover"] ?? brand.iconSize,
+      "instagram-feed": brand.iconSizes?.["instagram-feed"] ?? 68,
+    },
+    iconGaps: {
+      ...brand.iconGaps,
+      "web-cover": brand.iconGaps?.["web-cover"] ?? brand.iconGap,
+      "instagram-feed": brand.iconGaps?.["instagram-feed"] ?? 14,
+    },
+    logoBoxes: {
+      ...brand.logoBoxes,
+      "web-cover": brand.logoBoxes?.["web-cover"] ?? brand.logoBox ?? { ...web.logoBox },
+      "instagram-feed": brand.logoBoxes?.["instagram-feed"] ?? { ...social.logoBox },
+    },
+    signature: {
+      ...brand.signature,
+      positions: {
+        ...brand.signature.positions,
+        "web-cover": brand.signature.positions?.["web-cover"] ?? { x: brand.signature.x, y: brand.signature.y },
+        "instagram-feed": brand.signature.positions?.["instagram-feed"]?.x === 50 && brand.signature.positions?.["instagram-feed"]?.y === 1295
+          ? { x: 50, y: social.height - social.signature.bottom }
+          : brand.signature.positions?.["instagram-feed"] ?? { x: brand.signature.x, y: social.height - social.signature.bottom },
+      },
+    },
+  };
+};
+
+export const createDefaultProject = (name = "پروژهٔ جدید", templateId: CoverTemplateId = "web-cover"): ProjectState => {
+  const definition = getTemplateDefinition(templateId);
+  return ({
   schemaVersion: SCHEMA_VERSION,
+  templateId,
   id: crypto.randomUUID(),
   name,
   siteName: "نام وب‌سایت",
@@ -62,41 +111,31 @@ export const createDefaultProject = (name = "پروژهٔ جدید"): ProjectSta
   implementation: "React Development",
   selectedTech: [],
   customTech: [],
-  front: createDefaultLayer("front"),
-  back: createDefaultLayer("back"),
+  coverPreview: null,
+  front: createDefaultLayer("front", templateId),
+  back: createDefaultLayer("back", templateId),
   text: {
     siteName: {
-      x: 50,
-      y: 328,
-      width: 340,
-      fontSize: 44,
-      minFontSize: 25,
+      ...definition.text.siteName,
       color: "#606060",
       direction: "auto",
     },
     template: {
-      x: 52,
-      y: 397,
-      width: 340,
-      fontSize: 29,
-      minFontSize: 20,
+      ...definition.text.template,
       color: "#808080",
       direction: "auto",
     },
     implementation: {
-      x: 52,
-      y: 451,
-      width: 340,
-      fontSize: 28,
-      minFontSize: 19,
+      ...definition.text.implementation,
       color: "#808080",
       direction: "auto",
     },
   },
-  technologies: { x: 50, y: 515, width: 340 },
+  technologies: { ...definition.technologies },
   output: { format: "png", scale: 1, quality: 0.92 },
   updatedAt: Date.now(),
-});
+  });
+};
 
 export const TEMPLATE_SUGGESTIONS = [
   "طراحی اختصاصی",

@@ -6,6 +6,8 @@ import {
   type AssetMeta,
   type ProjectState,
 } from "./model";
+import type { CoverTemplateId } from "./model";
+import { getTemplateDefinition, TEMPLATE_DEFINITIONS } from "./templates";
 
 export const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -60,7 +62,7 @@ const validTextItem = (value: unknown) =>
   isRecord(value) &&
   finiteFields(value, ["x", "y", "width", "fontSize", "minFontSize"]) &&
   within(value.x, -2160, 2160) &&
-  within(value.y, -1696, 1696) &&
+  within(value.y, -2700, 5400) &&
   within(value.width, 1, 1080) &&
   within(value.fontSize, 8, 240) &&
   within(value.minFontSize, 8, 240) &&
@@ -70,6 +72,7 @@ const validTextItem = (value: unknown) =>
 export const validateProject = (value: unknown): value is ProjectState => {
   if (!isRecord(value) || value.schemaVersion !== SCHEMA_VERSION) return false;
   if (
+    !(Object.keys(TEMPLATE_DEFINITIONS) as CoverTemplateId[]).includes(String(value.templateId) as CoverTemplateId) ||
     typeof value.id !== "string" || value.id.length > 120 ||
     typeof value.name !== "string" || value.name.length > 180 ||
     typeof value.siteName !== "string" || value.siteName.length > 500 ||
@@ -80,13 +83,14 @@ export const validateProject = (value: unknown): value is ProjectState => {
     !value.selectedTech.every((entry) => typeof entry === "string" && entry.length <= 80) ||
     !Array.isArray(value.customTech) || value.customTech.length > 8 ||
     !value.customTech.every((entry) => isRecord(entry) && typeof entry.id === "string" && typeof entry.label === "string" && isAsset(entry.asset)) ||
+    !(value.coverPreview === null || isAsset(value.coverPreview)) ||
     !validLayer(value.front) || !validLayer(value.back) ||
     !isRecord(value.text) ||
     !validTextItem(value.text.siteName) || !validTextItem(value.text.template) || !validTextItem(value.text.implementation) ||
     !isRecord(value.technologies) ||
     !finiteFields(value.technologies, ["x", "y", "width"]) ||
     !within(value.technologies.x, -1080, 2160) ||
-    !within(value.technologies.y, -848, 1696) ||
+    !within(value.technologies.y, -2700, 5400) ||
     !within(value.technologies.width, 1, 1080) ||
     !isRecord(value.output) ||
     !["png", "webp"].includes(String(value.output.format)) ||
@@ -95,4 +99,49 @@ export const validateProject = (value: unknown): value is ProjectState => {
     !isFiniteNumber(value.updatedAt)
   ) return false;
   return true;
+};
+
+/** Migrates older projects and adds an empty cached render where none was stored. */
+export const migrateProject = (value: unknown): ProjectState | null => {
+  if (!isRecord(value)) return null;
+  if (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== SCHEMA_VERSION) return null;
+  const isOldSocialProject = value.schemaVersion < 3 && value.templateId === "instagram-feed";
+  const social = getTemplateDefinition("instagram-feed");
+  const previousDefaults = {
+    front: { x: 545, y: 190, width: 500 },
+    back: { x: 650, y: 20, width: 430 },
+    siteName: { x: 50, y: 265, width: 405, fontSize: 44, minFontSize: 25 },
+    template: { x: 52, y: 335, width: 405, fontSize: 29, minFontSize: 20 },
+    implementation: { x: 52, y: 390, width: 405, fontSize: 28, minFontSize: 19 },
+    technologies: { x: 50, y: 465, width: 405 },
+  };
+  const matches = (candidate: unknown, baseline: Record<string, number>) =>
+    isRecord(candidate) && Object.entries(baseline).every(([key, expected]) => candidate[key] === expected);
+  const migratedFront = isOldSocialProject && isRecord(value.front) && matches(value.front, previousDefaults.front)
+    ? { ...value.front, ...social.layers.front }
+    : value.front;
+  const migratedBack = isOldSocialProject && isRecord(value.back) && matches(value.back, previousDefaults.back)
+    ? { ...value.back, ...social.layers.back }
+    : value.back;
+  const migratedText = isRecord(value.text) ? { ...value.text } : null;
+  if (isOldSocialProject && isRecord(migratedText)) {
+    for (const key of ["siteName", "template", "implementation"] as const) {
+      if (isRecord(migratedText[key]) && matches(migratedText[key], previousDefaults[key])) {
+        migratedText[key] = { ...migratedText[key], ...social.text[key] };
+      }
+    }
+  }
+  const migrated = {
+    ...value,
+    schemaVersion: SCHEMA_VERSION,
+    templateId: value.templateId ?? "web-cover",
+    coverPreview: value.coverPreview ?? null,
+    front: migratedFront,
+    back: migratedBack,
+    text: migratedText ?? value.text,
+    technologies: isOldSocialProject && isRecord(value.technologies) && matches(value.technologies, previousDefaults.technologies)
+      ? { ...value.technologies, ...social.technologies }
+      : value.technologies,
+  };
+  return validateProject(migrated) ? migrated : null;
 };

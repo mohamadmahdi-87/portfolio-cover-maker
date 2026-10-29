@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;
 export const CANVAS_WIDTH = 1080;
 export const CANVAS_HEIGHT = 848;
 export const MAX_ASSET_BYTES = 40 * 1024 * 1024;
@@ -11,6 +11,7 @@ export type ExportScale = 1 | 2 | 3;
 export type ExportFormat = "png" | "webp";
 export type TextDirection = "auto" | "rtl" | "ltr";
 export type LocalFontFamily = "Vazirmatn" | "Inter";
+export type CoverTemplateId = "web-cover" | "instagram-feed";
 
 export interface AssetMeta {
   id: string;
@@ -49,6 +50,7 @@ export interface BrandSettings {
   logoDefaultApplied?: boolean;
   logoVisible: boolean;
   logoBox: Rect;
+  logoBoxes?: Partial<Record<CoverTemplateId, Rect>>;
   logoOpacity: number;
   signature: {
     text: string;
@@ -56,9 +58,12 @@ export interface BrandSettings {
     y: number;
     fontSize: number;
     color: string;
+    positions?: Partial<Record<CoverTemplateId, Point>>;
   };
   iconSize: number;
   iconGap: number;
+  iconSizes?: Partial<Record<CoverTemplateId, number>>;
+  iconGaps?: Partial<Record<CoverTemplateId, number>>;
 }
 
 export interface TextItem {
@@ -73,6 +78,7 @@ export interface TextItem {
 
 export interface ProjectState {
   schemaVersion: number;
+  templateId: CoverTemplateId;
   id: string;
   name: string;
   siteName: string;
@@ -81,6 +87,8 @@ export interface ProjectState {
   implementation: string;
   selectedTech: string[];
   customTech: Array<{ id: string; label: string; asset: AssetMeta }>;
+  /** Compact render of the most recently downloaded Canvas export, for the project launcher. */
+  coverPreview: AssetMeta | null;
   front: ImageLayer;
   back: ImageLayer;
   text: {

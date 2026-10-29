@@ -1,7 +1,8 @@
-import { CANVAS_HEIGHT, CANVAS_WIDTH, type BrandSettings, type ProjectState, type RenderResources } from "./model";
+import { type BrandSettings, type ProjectState, type RenderResources } from "./model";
 import { clamp, imageClipRect, naturalImageRect } from "./geometry";
 import { fitText, textDirection } from "./text-layout";
 import { iconForTechnology } from "./technology-icons";
+import { getLogoBox, getSignaturePosition, getTechnologyStyle, getTemplateDefinition } from "./templates";
 
 export interface RenderWarning {
   id: string;
@@ -18,8 +19,8 @@ const drawImageLayer = (
 ) => {
   const layer = project[side];
   if (!source || !layer.asset || !layer.visible) return;
-  const rect = naturalImageRect(layer, layer.asset);
-  const clip = imageClipRect(layer);
+  const rect = naturalImageRect(layer, layer.asset, project.templateId);
+  const clip = imageClipRect(layer, project.templateId);
   ctx.save();
   ctx.beginPath();
   ctx.rect(clip.x, clip.y, clip.width, clip.height);
@@ -38,9 +39,9 @@ const drawImageLayer = (
   ctx.restore();
 };
 
-const drawLogo = (ctx: CanvasRenderingContext2D, brand: BrandSettings, source?: CanvasImageSource) => {
+const drawLogo = (ctx: CanvasRenderingContext2D, project: ProjectState, brand: BrandSettings, source?: CanvasImageSource) => {
   if (!source || !brand.logo || !brand.logoVisible) return;
-  const box = brand.logoBox;
+  const box = getLogoBox(brand, project.templateId);
   const scale = Math.min(box.width / brand.logo.width, box.height / brand.logo.height);
   const width = brand.logo.width * scale;
   const height = brand.logo.height * scale;
@@ -78,8 +79,9 @@ const drawFittedText = (
 
 const drawTechnologies = (ctx: CanvasRenderingContext2D, project: ProjectState, brand: BrandSettings, resources: RenderResources) => {
   const { x, y, width } = project.technologies;
-  const size = clamp(brand.iconSize, 18, 120);
-  const gap = clamp(brand.iconGap, 0, 80);
+  const technologyStyle = getTechnologyStyle(brand, project.templateId);
+  const size = clamp(technologyStyle.size, 18, 120);
+  const gap = clamp(technologyStyle.gap, 0, 80);
   let cursorX = x;
   let cursorY = y;
   const items = [
@@ -149,17 +151,26 @@ export const layoutWarnings = (project: ProjectState, brand: BrandSettings): Ren
       }
     }
   }
+  const technologyStyle = getTechnologyStyle(brand, project.templateId);
+  const iconSize = clamp(technologyStyle.size, 18, 120);
+  const iconGap = clamp(technologyStyle.gap, 0, 80);
   const techBottom =
     project.technologies.y +
     Math.ceil(
-      ((project.selectedTech.length + project.customTech.length) * (brand.iconSize + brand.iconGap)) /
+      ((project.selectedTech.length + project.customTech.length) * (iconSize + iconGap)) /
         Math.max(1, project.technologies.width),
     ) *
-      (brand.iconSize + brand.iconGap);
-  if (techBottom > brand.signature.y - 12) {
+      (iconSize + iconGap);
+  const signaturePosition = getSignaturePosition(brand, project.templateId);
+  if (techBottom > signaturePosition.y - 12) {
     warnings.push({ id: "tech-signature-overlap", message: "آیکون‌های فناوری به ناحیهٔ امضا نزدیک شده‌اند؛ تعداد، اندازه یا فاصله را کم کنید." });
   }
-  if (project.text.siteName.x + project.text.siteName.width > project.front.x && project.text.siteName.y < project.front.y + 80) {
+  const textMayHitImages = blocks.some((block, index) => {
+    const key = ["siteName", "template", "implementation"][index] as keyof ProjectState["text"];
+    const text = project.text[key];
+    return text.x + text.width > project.front.x && block.bottom > project.front.y;
+  });
+  if (textMayHitImages) {
     warnings.push({ id: "image-text-overlap", message: "عرض ستون متن ممکن است وارد محدودهٔ تصویر جلو شود." });
   }
   return warnings;
@@ -174,12 +185,13 @@ export const renderCover = (
 ): RenderWarning[] => {
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("مرورگر امکان رسم روی Canvas را فراهم نکرد.");
+  const { width, height } = getTemplateDefinition(project.templateId);
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  ctx.clearRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  ctx.clearRect(0, 0, width, height);
   ctx.fillStyle = brand.background;
-  ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+  ctx.fillRect(0, 0, width, height);
 
-  drawLogo(ctx, brand, resources.logo);
+  drawLogo(ctx, project, brand, resources.logo);
   drawImageLayer(ctx, project, "back", resources.back);
   drawImageLayer(ctx, project, "front", resources.front);
 
@@ -189,15 +201,19 @@ export const renderCover = (
   drawTechnologies(ctx, project, brand, resources);
 
   const signature = brand.signature;
+  const signaturePosition = getSignaturePosition(brand, project.templateId);
   ctx.save();
   ctx.direction = textDirection(signature.text, "auto");
   ctx.textAlign = "left";
   ctx.textBaseline = "top";
   ctx.fillStyle = signature.color;
   ctx.font = "400 " + clamp(signature.fontSize, 12, 80) + "px \"" + brand.fontFamily + "\", \"" + (brand.fontFamily === "Inter" ? "Vazirmatn" : "Inter") + "\", sans-serif";
-  ctx.fillText(signature.text, signature.x, signature.y);
+  ctx.fillText(signature.text, signaturePosition.x, signaturePosition.y);
   ctx.restore();
   return layoutWarnings(project, brand);
 };
 
-export const COVER_ASPECT_RATIO = CANVAS_WIDTH / CANVAS_HEIGHT;
+export const COVER_ASPECT_RATIO = (templateId: ProjectState["templateId"]) => {
+  const { width, height } = getTemplateDefinition(templateId);
+  return width / height;
+};

@@ -1,6 +1,7 @@
 import type { AssetMeta, BrandSettings, ProjectState } from "./model";
 import { inspectImageBlob } from "./file-assets";
 import { loadAsset, saveAsset } from "./database";
+import { migrateProject } from "./project-validation";
 
 export interface SqlBootstrap {
   projects: ProjectState[];
@@ -29,15 +30,20 @@ export const loadSqlBootstrap = async () => {
   if (!Array.isArray(data.projects) || !Array.isArray(data.assetIds)) {
     throw new Error("پاسخ پایگاه دادهٔ SQL معتبر نیست.");
   }
+  const projects = data.projects.map(migrateProject);
+  if (projects.some((project) => project === null)) {
+    throw new Error("SQL contains a project with an unsupported structure.");
+  }
   remoteAssets.clear();
   data.assetIds.forEach((id) => remoteAssets.add(id));
-  return data;
+  return { ...data, projects: projects.filter((project): project is ProjectState => project !== null) };
 };
 
 const collectAssets = (project: ProjectState, brand: BrandSettings) => {
   const assets = [
     project.front.asset,
     project.back.asset,
+    project.coverPreview,
     brand.logo,
     ...project.customTech.map((item) => item.asset),
   ];

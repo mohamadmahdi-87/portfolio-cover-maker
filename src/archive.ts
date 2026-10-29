@@ -2,7 +2,8 @@ import JSZip from "jszip";
 import { loadAsset, saveAsset } from "./database";
 import { MAX_ASSET_BYTES, SCHEMA_VERSION, type ArchiveManifest, type AssetMeta, type BrandSettings, type ProjectState } from "./model";
 import { inspectImageBlob } from "./file-assets";
-import { isAsset, isFiniteNumber, isRecord, validateProject } from "./project-validation";
+import { isAsset, isFiniteNumber, isRecord, migrateProject } from "./project-validation";
+import { migrateBrandSettings } from "./defaults";
 
 const MAX_ARCHIVE_BYTES = 150 * 1024 * 1024;
 const MAX_ARCHIVE_FILES = 24;
@@ -31,7 +32,7 @@ const isArchiveAssetEntry = (value: unknown): value is ArchiveAssetEntry => {
 };
 
 const validateBrand = (value: unknown): value is BrandSettings => {
-  if (!isRecord(value) || value.schemaVersion !== SCHEMA_VERSION) return false;
+  if (!isRecord(value) || ![1, 2, SCHEMA_VERSION].includes(Number(value.schemaVersion))) return false;
   if (
     !isHexColor(value.background) ||
     !["Vazirmatn", "Inter"].includes(String(value.fontFamily)) ||
@@ -49,9 +50,35 @@ const validateBrand = (value: unknown): value is BrandSettings => {
     !within(value.signature.fontSize, 12, 80) ||
     !isHexColor(value.signature.color) ||
     !within(value.iconSize, 18, 120) ||
-    !within(value.iconGap, 0, 80)
+    !within(value.iconGap, 0, 80) ||
+    (value.logoBoxes !== undefined && !isRecord(value.logoBoxes)) ||
+    (value.iconSizes !== undefined && !isRecord(value.iconSizes)) ||
+    (value.iconGaps !== undefined && !isRecord(value.iconGaps)) ||
+    (value.signature.positions !== undefined && !isRecord(value.signature.positions))
   ) {
     return false;
+  }
+  for (const [key, range] of [["iconSizes", [18, 120]], ["iconGaps", [0, 80]]] as const) {
+    const entries = value[key];
+    if (entries !== undefined && isRecord(entries)) {
+      for (const [templateId, amount] of Object.entries(entries)) {
+        if (!['web-cover', 'instagram-feed'].includes(templateId) || !within(amount, range[0], range[1])) return false;
+      }
+    }
+  }
+  if (value.logoBoxes !== undefined && isRecord(value.logoBoxes)) {
+    for (const [templateId, box] of Object.entries(value.logoBoxes)) {
+      if (!['web-cover', 'instagram-feed'].includes(templateId) || !isRecord(box) ||
+        !hasFiniteFields(box, ['x', 'y', 'width', 'height']) ||
+        !within(box.x, -2160, 2160) || !within(box.y, -2700, 2700) ||
+        !within(box.width, 1, 2160) || !within(box.height, 1, 2700)) return false;
+    }
+  }
+  if (value.signature.positions !== undefined && isRecord(value.signature.positions)) {
+    for (const [templateId, position] of Object.entries(value.signature.positions)) {
+      if (!['web-cover', 'instagram-feed'].includes(templateId) || !isRecord(position) ||
+        !hasFiniteFields(position, ['x', 'y']) || !within(position.x, -2160, 2160) || !within(position.y, -2700, 2700)) return false;
+    }
   }
   return true;
 };
@@ -63,6 +90,7 @@ export const buildProjectArchive = async (project: ProjectState, brand: BrandSet
   };
   add(project.front.asset);
   add(project.back.asset);
+  add(project.coverPreview);
   add(brand.logo);
   for (const technology of project.customTech) add(technology.asset);
 
@@ -118,10 +146,11 @@ export const importProjectArchive = async (file: File): Promise<ImportedArchive>
   } catch {
     throw new Error("ساختار manifest پشتیبان قابل‌خواندن نیست.");
   }
+  const project = isRecord(manifest) ? migrateProject(manifest.project) : null;
   if (
     !isRecord(manifest) ||
-    manifest.schemaVersion !== SCHEMA_VERSION ||
-    !validateProject(manifest.project) ||
+    ![1, 2, SCHEMA_VERSION].includes(Number(manifest.schemaVersion)) ||
+    !project ||
     !validateBrand(manifest.brand) ||
     !Array.isArray(manifest.assets) ||
     manifest.assets.length > MAX_ARCHIVE_FILES - 1
@@ -129,8 +158,7 @@ export const importProjectArchive = async (file: File): Promise<ImportedArchive>
     throw new Error("نسخه یا ساختار فایل پشتیبان پشتیبانی نمی‌شود.");
   }
 
-  const project = manifest.project;
-  const brand = manifest.brand;
+  const brand = migrateBrandSettings(manifest.brand as BrandSettings);
   const assetEntries: ArchiveAssetEntry[] = [];
   for (const value of manifest.assets) {
     if (!isArchiveAssetEntry(value)) {
@@ -146,7 +174,7 @@ export const importProjectArchive = async (file: File): Promise<ImportedArchive>
   }
   const listedIds = new Set(assetEntries.map((asset) => asset.id));
   if (listedIds.size !== assetEntries.length) throw new Error("فایل‌های تکراری در manifest پشتیبان پیدا شد.");
-  const referencedAssets = [project.front.asset, project.back.asset, brand.logo, ...project.customTech.map((item) => item.asset)]
+  const referencedAssets = [project.front.asset, project.back.asset, project.coverPreview, brand.logo, ...project.customTech.map((item) => item.asset)]
     .filter((asset): asset is AssetMeta => Boolean(asset));
   const referencedById = new Map<string, AssetMeta>();
   for (const meta of referencedAssets) {

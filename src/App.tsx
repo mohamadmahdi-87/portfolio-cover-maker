@@ -39,6 +39,7 @@ import {
   createDefaultLayer,
   createDefaultProject,
   DEFAULT_WEBZAD_LOGO,
+  migrateBrandSettings,
   IMPLEMENTATION_SUGGESTIONS,
   TEMPLATE_SUGGESTIONS,
 } from "./defaults";
@@ -50,11 +51,12 @@ import {
   loadBrand,
   loadProject,
   removeProject,
+  saveAsset,
   saveActiveProjectId,
   saveBrand,
   saveProject,
 } from "./database";
-import { ensureDefaultWebzadLogo, persistImageFile } from "./file-assets";
+import { ensureDefaultWebzadLogo, inspectImageBlob, persistImageFile } from "./file-assets";
 import {
   deleteSqlProject,
   hydrateSqlAssets,
@@ -62,12 +64,11 @@ import {
   setSqlActiveProject,
   syncProjectToSql,
 } from "./sql-api";
-import { clamp, naturalImageRect, safeCanvasPoint } from "./geometry";
+import { clamp, naturalImageRect, outputDimensions, safeCanvasPoint } from "./geometry";
 import {
-  CANVAS_HEIGHT,
-  CANVAS_WIDTH,
   type AssetMeta,
   type BrandSettings,
+  type CoverTemplateId,
   type ExportFormat,
   type ExportScale,
   type ImageLayer,
@@ -76,6 +77,7 @@ import {
 } from "./model";
 import { layoutWarnings, renderCover } from "./renderer";
 import { technologyCatalog } from "./technology-icons";
+import { getLogoBox, getSignaturePosition, getTechnologyStyle, getTemplateDefinition } from "./templates";
 
 type LayerSide = "front" | "back";
 type Notice = { kind: "success" | "error"; text: string } | null;
@@ -90,15 +92,16 @@ type ConfirmationDialog = {
 };
 
 const migrateBrandLogo = (brand: BrandSettings | null | undefined): BrandSettings => {
-  if (!brand) return createDefaultBrand();
-  return brand.logoDefaultApplied
-    ? brand
-    : { ...brand, logo: brand.logo ?? { ...DEFAULT_WEBZAD_LOGO }, logoDefaultApplied: true };
+  const migrated = migrateBrandSettings(brand);
+  return migrated.logoDefaultApplied
+    ? migrated
+    : { ...migrated, logo: migrated.logo ?? { ...DEFAULT_WEBZAD_LOGO }, logoDefaultApplied: true };
 };
 
 function LayerControls({
   side,
   layer,
+  canvasHeight,
   selected,
   onSelect,
   onChange,
@@ -108,6 +111,7 @@ function LayerControls({
 }: {
   side: LayerSide;
   layer: ImageLayer;
+  canvasHeight: number;
   selected: boolean;
   onSelect: () => void;
   onChange: (layer: ImageLayer) => void;
@@ -161,7 +165,7 @@ function LayerControls({
       )}
       <div className="field-grid three">
         <NumberField id={side + "-x"} label="جایگاه X" value={layer.x} min={-1080} max={2160} onChange={(x) => set({ x })} />
-        <NumberField id={side + "-y"} label="جایگاه Y" value={layer.y} min={-848} max={1696} onChange={(y) => set({ y })} />
+        <NumberField id={side + "-y"} label="جایگاه Y" value={layer.y} min={-canvasHeight} max={canvasHeight * 2} onChange={(y) => set({ y })} />
         <NumberField id={side + "-width"} label="عرض" value={layer.width} min={20} max={2160} onChange={(width) => set({ width })} />
       </div>
       <RangeField
@@ -202,9 +206,11 @@ function LayerControls({
 }
 
 function ProjectCoverThumb({ project, background }: { project: ProjectState; background: string }) {
-  const [images, setImages] = useState<{ front?: string; back?: string }>({});
+  const template = getTemplateDefinition(project.templateId);
+  const [images, setImages] = useState<{ front?: string; back?: string; exported?: string }>({});
   const frontId = project.front.visible ? project.front.asset?.id : undefined;
   const backId = project.back.visible ? project.back.asset?.id : undefined;
+  const exportedId = project.coverPreview?.id;
 
   useEffect(() => {
     let cancelled = false;
@@ -212,7 +218,7 @@ function ProjectCoverThumb({ project, background }: { project: ProjectState; bac
 
     const load = async () => {
       const entries = await Promise.all(
-        [frontId, backId].map(async (id) => {
+        [frontId, backId, exportedId].map(async (id) => {
           if (!id) return undefined;
           const record = await loadAsset(id);
           if (!record) return undefined;
@@ -229,6 +235,7 @@ function ProjectCoverThumb({ project, background }: { project: ProjectState; bac
       setImages({
         front: frontId ? urls.get(frontId) : undefined,
         back: backId ? urls.get(backId) : undefined,
+        exported: exportedId ? urls.get(exportedId) : undefined,
       });
     };
 
@@ -239,14 +246,15 @@ function ProjectCoverThumb({ project, background }: { project: ProjectState; bac
       cancelled = true;
       objectUrls.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [frontId, backId]);
+  }, [frontId, backId, exportedId]);
 
   return (
-    <div className="project-art" style={{ backgroundColor: background }} aria-hidden="true">
-      {images.back && <img className="project-art-shot project-art-back" src={images.back} alt="" loading="lazy" />}
-      {images.front && <img className="project-art-shot project-art-front" src={images.front} alt="" loading="lazy" />}
+    <div className="project-art" style={{ backgroundColor: background, aspectRatio: template.width + " / " + template.height }} aria-hidden="true">
+      {images.exported ? <img className="project-art-exported" src={images.exported} alt="" loading="lazy" /> : <>
+      {images.back && <img className="project-art-shot project-art-back" style={{ left: (project.back.x / template.width) * 100 + "%", top: (project.back.y / template.height) * 100 + "%", width: (project.back.width / template.width) * 100 + "%" }} src={images.back} alt="" loading="lazy" />}
+      {images.front && <img className="project-art-shot project-art-front" style={{ left: (project.front.x / template.width) * 100 + "%", top: (project.front.y / template.height) * 100 + "%", width: (project.front.width / template.width) * 100 + "%" }} src={images.front} alt="" loading="lazy" />}
       {images.front || images.back ? (
-        <div className="project-art-copy">
+        <div className="project-art-copy" style={{ top: (project.text.siteName.y / template.height) * 100 + "%", width: (project.text.siteName.width / template.width) * 100 + "%" }}>
           <span>{project.templateType || "کاور نمونه‌کار"}</span>
           <strong dir="auto">{project.siteName || "نام سایت"}</strong>
           <small dir="auto">{project.implementation}</small>
@@ -257,7 +265,8 @@ function ProjectCoverThumb({ project, background }: { project: ProjectState; bac
           <span>هنوز تصویری ندارد</span>
         </div>
       )}
-      <span className="project-art-signature">Designed by Webzad</span>
+      <span className="project-art-signature" style={{ bottom: (template.signature.bottom / template.height) * 100 + "%" }}>Designed by Webzad</span>
+      </>}
     </div>
   );
 }
@@ -274,7 +283,7 @@ function LauncherHome({
   activeProjectId: string;
   background: string;
   onOpen: (id: string) => void;
-  onCreate: () => void;
+  onCreate: (templateId?: CoverTemplateId) => void;
   onDelete: (project: ProjectState) => void;
 }) {
   return (
@@ -284,7 +293,7 @@ function LauncherHome({
           <img src="/favicon-webzad.png" alt="" />
           <span><b>WEBZAD STUDIO</b><small>فضای کار طراحی</small></span>
         </div>
-        <button className="button button-primary" type="button" onClick={onCreate}>
+        <button className="button button-primary" type="button" onClick={() => onCreate()}>
           <Plus size={17} aria-hidden="true" /> پروژهٔ تازه
         </button>
       </header>
@@ -295,7 +304,7 @@ function LauncherHome({
             <span className="launcher-kicker"><Layers size={15} aria-hidden="true" /> WEBZAD COVER STUDIO</span>
             <h1 id="launcher-title">از آخرین کار ادامه بده،<br />یا از نو شروع کن.</h1>
             <p>پروژه‌های ذخیره‌شده را باز کن یا برای یک کاور تازه از تمپلیت آماده شروع کن.</p>
-            <button className="button button-light" type="button" onClick={onCreate}>
+            <button className="button button-light" type="button" onClick={() => onCreate()}>
               ساخت پروژهٔ جدید <Plus size={16} aria-hidden="true" />
             </button>
           </div>
@@ -342,7 +351,7 @@ function LauncherHome({
               <FolderOpen size={26} aria-hidden="true" />
               <strong>هنوز پروژه‌ای ذخیره نشده</strong>
               <span>یک پروژهٔ تازه بساز تا از اینجا سریع به آن برگردی.</span>
-              <button className="button button-secondary" type="button" onClick={onCreate}><Plus size={16} aria-hidden="true" /> ساخت پروژه</button>
+              <button className="button button-secondary" type="button" onClick={() => onCreate()}><Plus size={16} aria-hidden="true" /> ساخت پروژه</button>
             </div>
           )}
         </section>
@@ -356,16 +365,16 @@ function LauncherHome({
             <span className="section-caption">تمپلیت‌های بیشتر به‌زودی اضافه می‌شوند</span>
           </div>
           <div className="template-grid">
-            <button className="template-card template-card-ready" type="button" onClick={onCreate}>
+            <button className="template-card template-card-ready" type="button" onClick={() => onCreate()}>
               <span className="template-art template-art-cover" aria-hidden="true"><Layers size={24} /><i /><i /></span>
               <span className="template-card-copy"><strong>کاور نمونه‌کار وب</strong><small>دو تصویر سایت، اطلاعات پروژه و خروجی آمادهٔ انتشار</small></span>
               <span className="template-card-action">شروع با این تمپلیت <Plus size={15} aria-hidden="true" /></span>
             </button>
-            <div className="template-card template-card-disabled" aria-disabled="true">
+            <button className="template-card template-card-ready template-card-social" type="button" onClick={() => onCreate("instagram-feed")}>
               <span className="template-art template-art-social" aria-hidden="true"><ImagePlus size={23} /><i /><i /></span>
-              <span className="template-card-copy"><strong>کاور شبکه‌های اجتماعی</strong><small>قالب‌های مربعی و عمودی برای انتشار آنلاین</small></span>
-              <span className="template-coming">به‌زودی</span>
-            </div>
+              <span className="template-card-copy"><strong>کاور شبکه‌های اجتماعی</strong><small>چیدمان مربعی ۱:۱ با متن در چپ و تصاویر هم‌پوشان در راست</small></span>
+              <span className="template-card-action">شروع با قالب ۱:۱ <Plus size={15} aria-hidden="true" /></span>
+            </button>
             <div className="template-card template-card-disabled" aria-disabled="true">
               <span className="template-art template-art-project" aria-hidden="true"><Palette size={23} /><i /><i /></span>
               <span className="template-card-copy"><strong>معرفی پروژه</strong><small>چیدمان تصویری برای نمایش جزئیات و روند کار</small></span>
@@ -473,6 +482,32 @@ function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragRef = useRef<{ side: LayerSide; point: { x: number; y: number } } | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
+  const templateDefinition = getTemplateDefinition(project.templateId);
+  const activeLogoBox = getLogoBox(brand, project.templateId);
+  const activeSignaturePosition = getSignaturePosition(brand, project.templateId);
+  const activeTechnologyStyle = getTechnologyStyle(brand, project.templateId);
+
+  const updateLogoBox = (change: Partial<BrandSettings["logoBox"]>) => setBrand((current) => {
+    const box = getLogoBox(current, project.templateId);
+    return {
+      ...current,
+      logoBoxes: { ...current.logoBoxes, [project.templateId]: { ...box, ...change } },
+      ...(project.templateId === "web-cover" ? { logoBox: { ...current.logoBox, ...change } } : {}),
+    };
+  });
+
+  const updateSignaturePosition = (change: Partial<{ x: number; y: number }>) => setBrand((current) => {
+    const position = getSignaturePosition(current, project.templateId);
+    const next = { ...position, ...change };
+    return {
+      ...current,
+      signature: {
+        ...current.signature,
+        positions: { ...current.signature.positions, [project.templateId]: next },
+        ...(project.templateId === "web-cover" ? next : {}),
+      },
+    };
+  });
 
   const closeDialog = useCallback(() => setDialog(null), []);
 
@@ -719,8 +754,8 @@ function App() {
     await collectOrphanAssets();
   };
 
-  const createProject = async () => {
-    const next = createDefaultProject("پروژهٔ جدید");
+  const createProject = async (templateId: CoverTemplateId = "web-cover") => {
+    const next = createDefaultProject(templateId === "instagram-feed" ? "پروژهٔ شبکهٔ اجتماعی" : "پروژهٔ جدید", templateId);
     setProject(next);
     setActiveLayer(null);
     setView("editor");
@@ -816,7 +851,7 @@ function App() {
 
   const resetProjectFields = () => {
     setProject((current) => {
-      const defaults = createDefaultProject(current.name);
+      const defaults = createDefaultProject(current.name, current.templateId);
       return {
         ...current,
         siteName: defaults.siteName,
@@ -884,14 +919,14 @@ function App() {
     const canvas = canvasRef.current;
     if (!canvas || !booted) return;
     const ratio = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = Math.round(CANVAS_WIDTH * ratio);
-    canvas.height = Math.round(CANVAS_HEIGHT * ratio);
+    canvas.width = Math.round(templateDefinition.width * ratio);
+    canvas.height = Math.round(templateDefinition.height * ratio);
     try {
       renderCover(canvas, project, brand, resources, ratio);
     } catch {
       return;
     }
-  }, [booted, project, brand, resources, fontsReady]);
+  }, [booted, project, brand, resources, fontsReady, templateDefinition.height, templateDefinition.width]);
 
   const downloadImage = async () => {
     if (!fontsReady || !resourcesReady || isExporting) return;
@@ -900,8 +935,9 @@ function App() {
       await document.fonts.ready;
       const canvas = document.createElement("canvas");
       const scale = project.output.scale;
-      canvas.width = CANVAS_WIDTH * scale;
-      canvas.height = CANVAS_HEIGHT * scale;
+      const dimensions = outputDimensions(scale, project.templateId);
+      canvas.width = dimensions.width;
+      canvas.height = dimensions.height;
       renderCover(canvas, project, brand, resources, scale);
       const mime = project.output.format === "png" ? "image/png" : "image/webp";
       const blob = await new Promise<Blob>((resolve, reject) => {
@@ -920,7 +956,43 @@ function App() {
       link.download = safeName + "-" + scale + "x." + project.output.format;
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1500);
-      showNotice("success", "تصویر " + CANVAS_WIDTH * scale + " × " + CANVAS_HEIGHT * scale + " پیکسل دانلود شد.");
+      try {
+        const previewScale = 0.5;
+        const previewCanvas = document.createElement("canvas");
+        previewCanvas.width = Math.round(templateDefinition.width * previewScale);
+        previewCanvas.height = Math.round(templateDefinition.height * previewScale);
+        const previewContext = previewCanvas.getContext("2d");
+        if (!previewContext) throw new Error("Preview image could not be created.");
+        previewContext.imageSmoothingQuality = "high";
+        previewContext.drawImage(canvas, 0, 0, previewCanvas.width, previewCanvas.height);
+        const previewBlob = await new Promise<Blob>((resolve, reject) => {
+          previewCanvas.toBlob((value) => (value ? resolve(value) : reject(new Error("Preview image could not be created."))), "image/png");
+        });
+        const previewDimensions = await inspectImageBlob(previewBlob, "image/png");
+        const coverPreview: AssetMeta = {
+          id: crypto.randomUUID(),
+          name: safeName + "-preview.png",
+          mime: "image/png",
+          ...previewDimensions,
+          size: previewBlob.size,
+        };
+        await saveAsset(coverPreview, previewBlob);
+        const updatedProject = { ...project, coverPreview, updatedAt: Date.now() };
+        setProject(updatedProject);
+        await saveProject(updatedProject);
+        try {
+          await syncProjectToSql(updatedProject, brand, updatedProject.id);
+        } catch {
+          setSaveState("error");
+        }
+        await collectOrphanAssets();
+        await refreshProjects();
+      } catch {
+        setSaveState("error");
+        showNotice("error", "The image was downloaded, but its project card preview could not be saved.");
+        return;
+      }
+      showNotice("success", "تصویر " + dimensions.width + " × " + dimensions.height + " پیکسل دانلود شد.");
     } catch (error) {
       showNotice("error", error instanceof Error ? error.message : "خروجی تصویر آماده نشد.");
     } finally {
@@ -971,7 +1043,7 @@ function App() {
 
   const onCanvasPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = event.currentTarget;
-    const point = safeCanvasPoint(event.clientX, event.clientY, canvas.getBoundingClientRect());
+    const point = safeCanvasPoint(event.clientX, event.clientY, canvas.getBoundingClientRect(), project.templateId);
     const hits = (["front", "back"] as const).filter((side) => {
       const layer = project[side];
       return layer.asset && layer.visible && point.x >= layer.x && point.x <= layer.x + layer.width && point.y >= layer.y;
@@ -986,27 +1058,27 @@ function App() {
   const onCanvasPointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!dragRef.current) return;
     const canvas = event.currentTarget;
-    const point = safeCanvasPoint(event.clientX, event.clientY, canvas.getBoundingClientRect());
+    const point = safeCanvasPoint(event.clientX, event.clientY, canvas.getBoundingClientRect(), project.templateId);
     const { side, point: previous } = dragRef.current;
     const layer = project[side];
-    setLayer(side, { ...layer, x: clamp(layer.x + point.x - previous.x, -1080, 2160), y: clamp(layer.y + point.y - previous.y, -848, 1696) });
+    setLayer(side, { ...layer, x: clamp(layer.x + point.x - previous.x, -templateDefinition.width, templateDefinition.width * 2), y: clamp(layer.y + point.y - previous.y, -templateDefinition.height, templateDefinition.height * 2) });
     dragRef.current = { side, point };
   };
 
   const layerOutline = (side: LayerSide) => {
     const layer = project[side];
     if (!activeLayer || activeLayer !== side || !layer.asset || !layer.visible) return null;
-    const natural = naturalImageRect(layer, layer.asset);
-    const height = Math.max(1, Math.min(CANVAS_HEIGHT - layer.y, natural.y + natural.height - layer.y));
+    const natural = naturalImageRect(layer, layer.asset, project.templateId);
+    const height = Math.max(1, Math.min(templateDefinition.height - layer.y, natural.y + natural.height - layer.y));
     return (
       <div
         className="drag-outline"
         aria-hidden="true"
         style={{
-          left: (layer.x / CANVAS_WIDTH) * 100 + "%",
-          top: (layer.y / CANVAS_HEIGHT) * 100 + "%",
-          width: (layer.width / CANVAS_WIDTH) * 100 + "%",
-          height: (height / CANVAS_HEIGHT) * 100 + "%",
+          left: (layer.x / templateDefinition.width) * 100 + "%",
+          top: (layer.y / templateDefinition.height) * 100 + "%",
+          width: (layer.width / templateDefinition.width) * 100 + "%",
+          height: (height / templateDefinition.height) * 100 + "%",
         }}
       >
         {side === "front" ? "تصویر جلو" : "تصویر عقب"}
@@ -1036,7 +1108,7 @@ function App() {
           activeProjectId={project.id}
           background={brand.background}
           onOpen={(id) => { void loadNamedProject(id); }}
-          onCreate={() => { void createProject(); }}
+          onCreate={(templateId) => { void createProject(templateId); }}
           onDelete={confirmDeleteProject}
         />
         {noticeToast}
@@ -1108,7 +1180,7 @@ function App() {
           </SectionPanel>
 
           <SectionPanel title="تصاویر سایت" icon={<ImagePlus size={17} />} initialOpen onReset={() => {
-            setProject((current) => ({ ...current, front: { ...createDefaultLayer("front"), asset: current.front.asset }, back: { ...createDefaultLayer("back"), asset: current.back.asset } }));
+            setProject((current) => ({ ...current, front: { ...createDefaultLayer("front", current.templateId), asset: current.front.asset }, back: { ...createDefaultLayer("back", current.templateId), asset: current.back.asset } }));
           }} resetLabel="بازنشانی جایگاه دو تصویر">
             <div className="swap-row">
               <span>دو تصویر با هم‌پوشانی نمایش داده می‌شوند</span>
@@ -1117,6 +1189,7 @@ function App() {
             <LayerControls
               side="front"
               layer={project.front}
+              canvasHeight={templateDefinition.height}
               selected={activeLayer === "front"}
               onSelect={() => setActiveLayer("front")}
               onChange={(layer) => setLayer("front", layer)}
@@ -1126,11 +1199,12 @@ function App() {
                 setLayer("front", { ...project.front, asset: null });
                 void removeAssetFromCurrent(old);
               }}
-              onReset={() => setLayer("front", { ...createDefaultLayer("front"), asset: project.front.asset, visible: project.front.visible })}
+              onReset={() => setLayer("front", { ...createDefaultLayer("front", project.templateId), asset: project.front.asset, visible: project.front.visible })}
             />
             <LayerControls
               side="back"
               layer={project.back}
+              canvasHeight={templateDefinition.height}
               selected={activeLayer === "back"}
               onSelect={() => setActiveLayer("back")}
               onChange={(layer) => setLayer("back", layer)}
@@ -1140,7 +1214,7 @@ function App() {
                 setLayer("back", { ...project.back, asset: null });
                 void removeAssetFromCurrent(old);
               }}
-              onReset={() => setLayer("back", { ...createDefaultLayer("back"), asset: project.back.asset, visible: project.back.visible })}
+              onReset={() => setLayer("back", { ...createDefaultLayer("back", project.templateId), asset: project.back.asset, visible: project.back.visible })}
             />
           </SectionPanel>
 
@@ -1153,10 +1227,10 @@ function App() {
             </div>
             {brand.logo && <div className="asset-meta"><span className="asset-name">{brand.logo.name}</span><span>{formatDimensions(brand.logo.width, brand.logo.height)}</span><span>{formatBytes(brand.logo.size)}</span></div>}
             <div className="field-grid two">
-              <NumberField id="logo-x" label="جایگاه X" value={brand.logoBox.x} min={-1080} max={2160} onChange={(x) => setBrand((current) => ({ ...current, logoBox: { ...current.logoBox, x } }))} />
-              <NumberField id="logo-y" label="جایگاه Y" value={brand.logoBox.y} min={-848} max={1696} onChange={(y) => setBrand((current) => ({ ...current, logoBox: { ...current.logoBox, y } }))} />
-              <NumberField id="logo-width" label="عرض محدوده" value={brand.logoBox.width} min={1} max={2160} onChange={(width) => setBrand((current) => ({ ...current, logoBox: { ...current.logoBox, width } }))} />
-              <NumberField id="logo-height" label="ارتفاع محدوده" value={brand.logoBox.height} min={1} max={1696} onChange={(height) => setBrand((current) => ({ ...current, logoBox: { ...current.logoBox, height } }))} />
+              <NumberField id="logo-x" label="جایگاه X" value={activeLogoBox.x} min={-1080} max={2160} onChange={(x) => updateLogoBox({ x })} />
+              <NumberField id="logo-y" label="جایگاه Y" value={activeLogoBox.y} min={-templateDefinition.height} max={templateDefinition.height * 2} onChange={(y) => updateLogoBox({ y })} />
+              <NumberField id="logo-width" label="عرض محدوده" value={activeLogoBox.width} min={1} max={2160} onChange={(width) => updateLogoBox({ width })} />
+              <NumberField id="logo-height" label="ارتفاع محدوده" value={activeLogoBox.height} min={1} max={templateDefinition.height * 2} onChange={(height) => updateLogoBox({ height })} />
             </div>
             <RangeField id="logo-opacity" label="شفافیت لوگو" value={Math.round(brand.logoOpacity * 100)} min={0} max={100} suffix="٪" onChange={(logoOpacity) => setBrand((current) => ({ ...current, logoOpacity: logoOpacity / 100 }))} />
             <div className="subsection-label">امضای پایین کاور</div>
@@ -1165,8 +1239,8 @@ function App() {
               <input id="signature" value={brand.signature.text} maxLength={80} onChange={(event) => { const text = event.currentTarget.value; setBrand((current) => ({ ...current, signature: { ...current.signature, text } })); }} />
             </div>
             <div className="field-grid two">
-              <NumberField id="signature-x" label="جایگاه X" value={brand.signature.x} min={-1080} max={2160} onChange={(x) => setBrand((current) => ({ ...current, signature: { ...current.signature, x } }))} />
-              <NumberField id="signature-y" label="جایگاه Y" value={brand.signature.y} min={-848} max={1696} onChange={(y) => setBrand((current) => ({ ...current, signature: { ...current.signature, y } }))} />
+              <NumberField id="signature-x" label="جایگاه X" value={activeSignaturePosition.x} min={-1080} max={2160} onChange={(x) => updateSignaturePosition({ x })} />
+              <NumberField id="signature-y" label="جایگاه Y" value={activeSignaturePosition.y} min={-templateDefinition.height} max={templateDefinition.height * 2} onChange={(y) => updateSignaturePosition({ y })} />
               <NumberField id="signature-size" label="اندازهٔ قلم" value={brand.signature.fontSize} min={12} max={80} onChange={(fontSize) => setBrand((current) => ({ ...current, signature: { ...current.signature, fontSize } }))} />
               <ColorField id="signature-color" label="رنگ امضا" value={brand.signature.color} onChange={(color) => setBrand((current) => ({ ...current, signature: { ...current.signature, color } }))} />
             </div>
@@ -1214,8 +1288,8 @@ function App() {
               </div>
             )}
             <div className="field-grid two">
-              <NumberField id="tech-size" label="اندازهٔ آیکون" value={brand.iconSize} min={18} max={120} onChange={(iconSize) => setBrand((current) => ({ ...current, iconSize }))} />
-              <NumberField id="tech-gap" label="فاصله" value={brand.iconGap} min={0} max={80} onChange={(iconGap) => setBrand((current) => ({ ...current, iconGap }))} />
+              <NumberField id="tech-size" label="اندازهٔ آیکون" value={activeTechnologyStyle.size} min={18} max={120} onChange={(iconSize) => setBrand((current) => ({ ...current, iconSizes: { ...current.iconSizes, [project.templateId]: iconSize }, ...(project.templateId === "web-cover" ? { iconSize } : {}) }))} />
+              <NumberField id="tech-gap" label="فاصله" value={activeTechnologyStyle.gap} min={0} max={80} onChange={(iconGap) => setBrand((current) => ({ ...current, iconGaps: { ...current.iconGaps, [project.templateId]: iconGap }, ...(project.templateId === "web-cover" ? { iconGap } : {}) }))} />
             </div>
           </SectionPanel>
 
@@ -1229,15 +1303,15 @@ function App() {
               </select>
             </div>
             <div className="subsection-label">نام سایت</div>
-            <TextFields item={project.text.siteName} id="site" onChange={(change) => updateText("siteName", change)} />
+            <TextFields item={project.text.siteName} id="site" canvasHeight={templateDefinition.height} onChange={(change) => updateText("siteName", change)} />
             <div className="subsection-label">نوع قالب</div>
-            <TextFields item={project.text.template} id="template" onChange={(change) => updateText("template", change)} />
+            <TextFields item={project.text.template} id="template" canvasHeight={templateDefinition.height} onChange={(change) => updateText("template", change)} />
             <div className="subsection-label">پیاده‌سازی</div>
-            <TextFields item={project.text.implementation} id="implementation-text" onChange={(change) => updateText("implementation", change)} />
+            <TextFields item={project.text.implementation} id="implementation-text" canvasHeight={templateDefinition.height} onChange={(change) => updateText("implementation", change)} />
             <div className="subsection-label">موقعیت ردیف تکنولوژی‌ها</div>
             <div className="field-grid three">
               <NumberField id="tech-x" label="جایگاه X" value={project.technologies.x} min={-1080} max={2160} onChange={(x) => setProject((current) => ({ ...current, technologies: { ...current.technologies, x } }))} />
-              <NumberField id="tech-y" label="جایگاه Y" value={project.technologies.y} min={-848} max={1696} onChange={(y) => setProject((current) => ({ ...current, technologies: { ...current.technologies, y } }))} />
+              <NumberField id="tech-y" label="جایگاه Y" value={project.technologies.y} min={-templateDefinition.height} max={templateDefinition.height * 2} onChange={(y) => setProject((current) => ({ ...current, technologies: { ...current.technologies, y } }))} />
               <NumberField id="tech-width" label="عرض ردیف" value={project.technologies.width} min={1} max={1080} onChange={(width) => setProject((current) => ({ ...current, technologies: { ...current.technologies, width } }))} />
             </div>
             <p className="field-hint">تنظیمات متن ابتدا اندازه را کوچک می‌کنند، سپس تا دو خط می‌شکنند؛ متن بلند حذف نمی‌شود.</p>
@@ -1271,9 +1345,9 @@ function App() {
             <div className="field">
               <label htmlFor="export-scale">اندازهٔ خروجی</label>
               <select id="export-scale" value={project.output.scale} onChange={(event) => { const scale = Number(event.currentTarget.value) as ExportScale; setProject((current) => ({ ...current, output: { ...current.output, scale } })); }}>
-                <option value={1}>1× · 1080 × 848</option>
-                <option value={2}>2× · 2160 × 1696</option>
-                <option value={3}>3× · 3240 × 2544</option>
+                <option value={1}>1× · {outputDimensions(1, project.templateId).width} × {outputDimensions(1, project.templateId).height}</option>
+                <option value={2}>2× · {outputDimensions(2, project.templateId).width} × {outputDimensions(2, project.templateId).height}</option>
+                <option value={3}>3× · {outputDimensions(3, project.templateId).width} × {outputDimensions(3, project.templateId).height}</option>
               </select>
             </div>
             {project.output.format === "webp" && <RangeField id="export-quality" label="کیفیت WebP" value={Math.round(project.output.quality * 100)} min={50} max={100} suffix="٪" onChange={(quality) => setProject((current) => ({ ...current, output: { ...current.output, quality: quality / 100 } }))} />}
@@ -1289,7 +1363,7 @@ function App() {
           <div className="preview-toolbar">
             <div>
               <div className="preview-title">پیش‌نمایش زنده</div>
-              <div className="preview-subtitle">بوم اصلی · 1080 × 848 پیکسل</div>
+              <div className="preview-subtitle">{templateDefinition.title} · {templateDefinition.width} × {templateDefinition.height} پیکسل</div>
             </div>
             <div className="preview-toolbar-actions">
               <span className="drag-hint"><Move size={14} aria-hidden="true" /> برای جابجایی روی تصویر بکشید</span>
@@ -1297,7 +1371,7 @@ function App() {
             </div>
           </div>
           <div className="preview-stage-wrap">
-            <div className="cover-stage">
+            <div className="cover-stage" style={{ aspectRatio: templateDefinition.width + " / " + templateDefinition.height }}>
               <canvas
                 ref={canvasRef}
                 aria-label="پیش‌نمایش تصویر کاور نهایی"
@@ -1342,17 +1416,19 @@ function App() {
 function TextFields({
   item,
   id,
+  canvasHeight,
   onChange,
 }: {
   item: ProjectState["text"]["siteName"];
   id: string;
+  canvasHeight: number;
   onChange: (change: Partial<ProjectState["text"]["siteName"]>) => void;
 }) {
   return (
     <>
       <div className="field-grid three">
         <NumberField id={id + "-x"} label="جایگاه X" value={item.x} min={-1080} max={2160} onChange={(x) => onChange({ x })} />
-        <NumberField id={id + "-y"} label="جایگاه Y" value={item.y} min={-848} max={1696} onChange={(y) => onChange({ y })} />
+        <NumberField id={id + "-y"} label="جایگاه Y" value={item.y} min={-canvasHeight} max={canvasHeight * 2} onChange={(y) => onChange({ y })} />
         <NumberField id={id + "-width"} label="عرض متن" value={item.width} min={1} max={1080} onChange={(width) => onChange({ width })} />
         <NumberField id={id + "-size"} label="اندازهٔ قلم" value={item.fontSize} min={8} max={120} onChange={(fontSize) => onChange({ fontSize })} />
         <NumberField id={id + "-min-size"} label="کمترین اندازه" value={item.minFontSize} min={8} max={100} onChange={(minFontSize) => onChange({ minFontSize })} />
