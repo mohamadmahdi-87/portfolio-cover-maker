@@ -80,6 +80,14 @@ import { technologyCatalog } from "./technology-icons";
 type LayerSide = "front" | "back";
 type Notice = { kind: "success" | "error"; text: string } | null;
 type SaveState = "loading" | "saving" | "saved" | "error";
+type ConfirmationDialog = {
+  mode: "confirm" | "notice";
+  title: string;
+  message: string;
+  confirmLabel: string;
+  destructive?: boolean;
+  onConfirm?: () => void | boolean | Promise<void | boolean>;
+};
 
 const migrateBrandLogo = (brand: BrandSettings | null | undefined): BrandSettings => {
   if (!brand) return createDefaultBrand();
@@ -193,13 +201,269 @@ function LayerControls({
   );
 }
 
+function ProjectCoverThumb({ project, background }: { project: ProjectState; background: string }) {
+  const [images, setImages] = useState<{ front?: string; back?: string }>({});
+  const frontId = project.front.visible ? project.front.asset?.id : undefined;
+  const backId = project.back.visible ? project.back.asset?.id : undefined;
+
+  useEffect(() => {
+    let cancelled = false;
+    const objectUrls: string[] = [];
+
+    const load = async () => {
+      const entries = await Promise.all(
+        [frontId, backId].map(async (id) => {
+          if (!id) return undefined;
+          const record = await loadAsset(id);
+          if (!record) return undefined;
+          const url = URL.createObjectURL(record.blob);
+          objectUrls.push(url);
+          return [id, url] as const;
+        }),
+      );
+      if (cancelled) {
+        objectUrls.forEach((url) => URL.revokeObjectURL(url));
+        return;
+      }
+      const urls = new Map(entries.filter((entry): entry is readonly [string, string] => Boolean(entry)));
+      setImages({
+        front: frontId ? urls.get(frontId) : undefined,
+        back: backId ? urls.get(backId) : undefined,
+      });
+    };
+
+    void load().catch(() => {
+      if (!cancelled) setImages({});
+    });
+    return () => {
+      cancelled = true;
+      objectUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [frontId, backId]);
+
+  return (
+    <div className="project-art" style={{ backgroundColor: background }} aria-hidden="true">
+      {images.back && <img className="project-art-shot project-art-back" src={images.back} alt="" loading="lazy" />}
+      {images.front && <img className="project-art-shot project-art-front" src={images.front} alt="" loading="lazy" />}
+      {images.front || images.back ? (
+        <div className="project-art-copy">
+          <span>{project.templateType || "کاور نمونه‌کار"}</span>
+          <strong dir="auto">{project.siteName || "نام سایت"}</strong>
+          <small dir="auto">{project.implementation}</small>
+        </div>
+      ) : (
+        <div className="project-art-empty">
+          <ImagePlus size={24} aria-hidden="true" />
+          <span>هنوز تصویری ندارد</span>
+        </div>
+      )}
+      <span className="project-art-signature">Designed by Webzad</span>
+    </div>
+  );
+}
+
+function LauncherHome({
+  projects,
+  activeProjectId,
+  background,
+  onOpen,
+  onCreate,
+  onDelete,
+}: {
+  projects: ProjectState[];
+  activeProjectId: string;
+  background: string;
+  onOpen: (id: string) => void;
+  onCreate: () => void;
+  onDelete: (project: ProjectState) => void;
+}) {
+  return (
+    <div className="launcher-shell min-h-screen" dir="rtl">
+      <header className="launcher-header">
+        <div className="launcher-brand" aria-label="وبزاد استودیو">
+          <img src="/favicon-webzad.png" alt="" />
+          <span><b>WEBZAD STUDIO</b><small>فضای کار طراحی</small></span>
+        </div>
+        <button className="button button-primary" type="button" onClick={onCreate}>
+          <Plus size={17} aria-hidden="true" /> پروژهٔ تازه
+        </button>
+      </header>
+
+      <main className="launcher-main">
+        <section className="launcher-welcome" aria-labelledby="launcher-title">
+          <div className="launcher-welcome-copy">
+            <span className="launcher-kicker"><Layers size={15} aria-hidden="true" /> WEBZAD COVER STUDIO</span>
+            <h1 id="launcher-title">از آخرین کار ادامه بده،<br />یا از نو شروع کن.</h1>
+            <p>پروژه‌های ذخیره‌شده را باز کن یا برای یک کاور تازه از تمپلیت آماده شروع کن.</p>
+            <button className="button button-light" type="button" onClick={onCreate}>
+              ساخت پروژهٔ جدید <Plus size={16} aria-hidden="true" />
+            </button>
+          </div>
+          <div className="launcher-welcome-art" aria-hidden="true">
+            <div className="welcome-sheet welcome-sheet-back" />
+            <div className="welcome-sheet welcome-sheet-front"><span>WZ</span><i /><i /><i /></div>
+            <span className="welcome-glow" />
+          </div>
+        </section>
+
+        <section className="launcher-section" aria-labelledby="projects-heading">
+          <div className="launcher-section-head">
+            <div>
+              <p className="launcher-kicker">ادامهٔ کار</p>
+              <h2 id="projects-heading">پروژه‌های شما</h2>
+            </div>
+            <span className="project-count">{projects.length.toLocaleString("fa-IR")} پروژه</span>
+          </div>
+          {projects.length ? (
+            <div className="saved-project-grid">
+              {projects.map((item) => (
+                <article className="saved-project-card" key={item.id}>
+                  <button className="project-card-open" type="button" onClick={() => onOpen(item.id)} aria-label={`باز کردن پروژهٔ ${item.name || "بدون نام"}`}>
+                    <ProjectCoverThumb key={`${item.id}-${item.front.asset?.id ?? ""}-${item.back.asset?.id ?? ""}`} project={item} background={background} />
+                    <span className="project-card-details">
+                      <span className="project-card-title-row">
+                        <strong>{item.name || "پروژهٔ بدون نام"}</strong>
+                        {item.id === activeProjectId && <span className="project-active-badge">فعال</span>}
+                      </span>
+                      <span className="project-card-site" dir="auto">{item.siteName || "نام سایت وارد نشده"}</span>
+                      <span className="project-card-updated">
+                        {Number.isFinite(item.updatedAt) ? new Intl.DateTimeFormat("fa-IR", { dateStyle: "medium" }).format(item.updatedAt) : "پروژهٔ ذخیره‌شده"}
+                      </span>
+                    </span>
+                  </button>
+                  <button className="project-card-delete" type="button" aria-label={`حذف پروژهٔ ${item.name || "بدون نام"}`} onClick={() => onDelete(item)}>
+                    <Trash2 size={16} aria-hidden="true" />
+                  </button>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="launcher-empty">
+              <FolderOpen size={26} aria-hidden="true" />
+              <strong>هنوز پروژه‌ای ذخیره نشده</strong>
+              <span>یک پروژهٔ تازه بساز تا از اینجا سریع به آن برگردی.</span>
+              <button className="button button-secondary" type="button" onClick={onCreate}><Plus size={16} aria-hidden="true" /> ساخت پروژه</button>
+            </div>
+          )}
+        </section>
+
+        <section className="launcher-section templates-section" aria-labelledby="templates-heading">
+          <div className="launcher-section-head">
+            <div>
+              <p className="launcher-kicker">شروع سریع</p>
+              <h2 id="templates-heading">انتخاب تمپلیت</h2>
+            </div>
+            <span className="section-caption">تمپلیت‌های بیشتر به‌زودی اضافه می‌شوند</span>
+          </div>
+          <div className="template-grid">
+            <button className="template-card template-card-ready" type="button" onClick={onCreate}>
+              <span className="template-art template-art-cover" aria-hidden="true"><Layers size={24} /><i /><i /></span>
+              <span className="template-card-copy"><strong>کاور نمونه‌کار وب</strong><small>دو تصویر سایت، اطلاعات پروژه و خروجی آمادهٔ انتشار</small></span>
+              <span className="template-card-action">شروع با این تمپلیت <Plus size={15} aria-hidden="true" /></span>
+            </button>
+            <div className="template-card template-card-disabled" aria-disabled="true">
+              <span className="template-art template-art-social" aria-hidden="true"><ImagePlus size={23} /><i /><i /></span>
+              <span className="template-card-copy"><strong>کاور شبکه‌های اجتماعی</strong><small>قالب‌های مربعی و عمودی برای انتشار آنلاین</small></span>
+              <span className="template-coming">به‌زودی</span>
+            </div>
+            <div className="template-card template-card-disabled" aria-disabled="true">
+              <span className="template-art template-art-project" aria-hidden="true"><Palette size={23} /><i /><i /></span>
+              <span className="template-card-copy"><strong>معرفی پروژه</strong><small>چیدمان تصویری برای نمایش جزئیات و روند کار</small></span>
+              <span className="template-coming">به‌زودی</span>
+            </div>
+          </div>
+        </section>
+      </main>
+      <footer className="launcher-footer"><span>WEBZAD STUDIO</span><span>ذخیره‌سازی روی MySQL محلی و همین مرورگر</span></footer>
+    </div>
+  );
+}
+
+function ConfirmationModal({ dialog, onClose }: { dialog: ConfirmationDialog; onClose: () => void }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  const confirmRef = useRef<HTMLButtonElement>(null);
+  const busyRef = useRef(false);
+  const [busy, setBusy] = useState(false);
+
+  const handleConfirm = useCallback(async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    try {
+      const result = await dialog.onConfirm?.();
+      if (result !== false) onClose();
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  }, [dialog, onClose]);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    confirmRef.current?.focus();
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        if (!busyRef.current) onClose();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        if (!busyRef.current) void handleConfirm();
+      } else if (event.key === "Tab") {
+        const focusable = modalRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled)");
+        if (!focusable?.length) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", onKeyDown);
+      previousFocus?.focus();
+    };
+  }, [dialog, handleConfirm, onClose]);
+
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) onClose(); }}>
+      <div className="confirm-modal" ref={modalRef} role="alertdialog" aria-modal="true" aria-labelledby="confirm-modal-title" aria-describedby="confirm-modal-message" dir="rtl">
+        <button className="modal-close" type="button" aria-label="بستن پنجره" onClick={onClose} disabled={busy}><X size={18} aria-hidden="true" /></button>
+        <span className={"modal-icon" + (dialog.destructive ? " modal-icon-danger" : "")}>
+          {dialog.destructive ? <Trash2 size={20} aria-hidden="true" /> : <AlertTriangle size={20} aria-hidden="true" />}
+        </span>
+        <h2 id="confirm-modal-title">{dialog.title}</h2>
+        <p id="confirm-modal-message">{dialog.message}</p>
+        <div className="modal-actions">
+          {dialog.mode === "confirm" && <button className="button button-secondary" type="button" onClick={onClose} disabled={busy}>انصراف <kbd>Esc</kbd></button>}
+          <button ref={confirmRef} className={"button " + (dialog.destructive ? "button-danger" : "button-primary")} type="button" onClick={() => void handleConfirm()} disabled={busy}>
+            {busy && <LoaderCircle size={15} className="spin" aria-hidden="true" />}
+            {busy ? "در حال انجام" : dialog.confirmLabel}
+            {!busy && <kbd>Enter</kbd>}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [project, setProject] = useState<ProjectState>(() => createDefaultProject());
   const [brand, setBrand] = useState<BrandSettings>(() => createDefaultBrand());
+  const [view, setView] = useState<"launcher" | "editor">("launcher");
   const [booted, setBooted] = useState(false);
   const [projects, setProjects] = useState<ProjectState[]>([]);
   const [saveState, setSaveState] = useState<SaveState>("loading");
   const [notice, setNotice] = useState<Notice>(null);
+  const [dialog, setDialog] = useState<ConfirmationDialog | null>(null);
   const [fontsReady, setFontsReady] = useState(false);
   const [resources, setResources] = useState<RenderResources>({ techCustom: new Map() });
   const [resourcesReady, setResourcesReady] = useState(false);
@@ -210,7 +474,14 @@ function App() {
   const dragRef = useRef<{ side: LayerSide; point: { x: number; y: number } } | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
 
+  const closeDialog = useCallback(() => setDialog(null), []);
+
   const showNotice = useCallback((kind: "success" | "error", text: string) => {
+    if (kind === "error") {
+      setNotice(null);
+      setDialog({ mode: "notice", title: "عملیات انجام نشد", message: text, confirmLabel: "متوجه شدم" });
+      return;
+    }
     setNotice({ kind, text });
     window.setTimeout(() => setNotice(null), 4500);
   }, []);
@@ -452,8 +723,11 @@ function App() {
     const next = createDefaultProject("پروژهٔ جدید");
     setProject(next);
     setActiveLayer(null);
-    await saveActiveProjectId(next.id);
+    setView("editor");
     try {
+      await Promise.all([saveProject(next), saveActiveProjectId(next.id)]);
+      await refreshProjects();
+      await syncProjectToSql(next, brand, next.id);
       await setSqlActiveProject(next.id);
       showNotice("success", "پروژهٔ تازه ساخته شد؛ تنظیمات برند حفظ شده است.");
     } catch (error) {
@@ -470,6 +744,7 @@ function App() {
     }
     setProject(next);
     setActiveLayer(null);
+    setView("editor");
     await saveActiveProjectId(next.id);
     try {
       await setSqlActiveProject(next.id);
@@ -479,35 +754,64 @@ function App() {
     }
   };
 
-  const deleteCurrentProject = async () => {
-    if (!window.confirm("پروژهٔ «" + project.name + "» حذف شود؟ این کار قابل بازگشت نیست.")) return;
+  const deleteSavedProject = async (target: ProjectState) => {
     try {
-      await deleteSqlProject(project.id);
+      await deleteSqlProject(target.id);
+      await removeProject(target.id);
+      const remaining = (await listProjects()).sort((a, b) => b.updatedAt - a.updatedAt);
+      if (target.id === project.id) {
+        const next = remaining[0] ?? createDefaultProject();
+        if (remaining.length === 0) {
+          await saveProject(next);
+          remaining.push(next);
+        }
+        setProject(next);
+        setActiveLayer(null);
+        await saveActiveProjectId(next.id);
+        try {
+          await syncProjectToSql(next, brand, next.id);
+          await setSqlActiveProject(next.id);
+        } catch (error) {
+          setSaveState("error");
+          setProjects(remaining);
+          showNotice("error", error instanceof Error ? error.message : "پروژهٔ فعال در SQL به‌روزرسانی نشد.");
+          return false;
+        }
+      }
+      setProjects(remaining);
+      await collectOrphanAssets();
+      return true;
     } catch (error) {
-      showNotice("error", error instanceof Error ? error.message : "حذف پروژه از SQL انجام نشد.");
-      return;
+      showNotice("error", error instanceof Error ? error.message : "حذف پروژه انجام نشد.");
+      return false;
     }
-    await removeProject(project.id);
-    const remaining = (await listProjects()).sort((a, b) => b.updatedAt - a.updatedAt);
-    const next = remaining[0] ?? createDefaultProject();
-    setProjects(remaining);
-    setProject(next);
-    await saveActiveProjectId(next.id);
-    try {
-      await setSqlActiveProject(next.id);
-    } catch (error) {
-      setSaveState("error");
-      showNotice("error", error instanceof Error ? error.message : "پروژهٔ فعال در SQL به‌روزرسانی نشد.");
-    }
-    await collectOrphanAssets();
   };
 
-  const resetEverything = () => {
-    if (!window.confirm("همهٔ اطلاعات و چیدمان پروژه به مقدارهای اولیه برگردد؟")) return;
-    setProject(createDefaultProject());
-    setBrand(createDefaultBrand());
-    setActiveLayer(null);
-    showNotice("success", "چیدمان و تنظیمات برند بازنشانی شد.");
+  const confirmDeleteProject = (target: ProjectState) => {
+    setDialog({
+      mode: "confirm",
+      title: "حذف پروژه؟",
+      message: `پروژهٔ «${target.name || "بدون نام"}» برای همیشه از فهرست محلی و SQL حذف می‌شود.`,
+      confirmLabel: "حذف پروژه",
+      destructive: true,
+      onConfirm: () => deleteSavedProject(target),
+    });
+  };
+
+  const confirmResetEverything = () => {
+    setDialog({
+      mode: "confirm",
+      title: "بازنشانی کامل پروژه؟",
+      message: "اطلاعات و چیدمان پروژهٔ فعلی و تنظیمات برند به مقدارهای اولیه برمی‌گردد.",
+      confirmLabel: "بازنشانی",
+      destructive: true,
+      onConfirm: () => {
+        setProject(createDefaultProject());
+        setBrand(createDefaultBrand());
+        setActiveLayer(null);
+        showNotice("success", "چیدمان و تنظیمات برند بازنشانی شد.");
+      },
+    });
   };
 
   const resetProjectFields = () => {
@@ -712,6 +1016,35 @@ function App() {
 
   const downloadReady = fontsReady && resourcesReady && !isExporting;
 
+  const noticeToast = notice && (
+    <div className="toast" role="status">
+      <Check size={17} aria-hidden="true" />
+      <span>{notice.text}</span>
+      <button type="button" aria-label="بستن پیام" onClick={() => setNotice(null)}><X size={15} aria-hidden="true" /></button>
+    </div>
+  );
+
+  if (!booted) {
+    return <div className="app-loading" dir="rtl"><LoaderCircle size={22} className="spin" aria-hidden="true" /><span>در حال آماده‌سازی پروژه‌ها…</span></div>;
+  }
+
+  if (view === "launcher") {
+    return (
+      <>
+        <LauncherHome
+          projects={projects}
+          activeProjectId={project.id}
+          background={brand.background}
+          onOpen={(id) => { void loadNamedProject(id); }}
+          onCreate={() => { void createProject(); }}
+          onDelete={confirmDeleteProject}
+        />
+        {noticeToast}
+        {dialog && <ConfirmationModal dialog={dialog} onClose={closeDialog} />}
+      </>
+    );
+  }
+
   return (
     <div className="app-shell min-h-screen" dir="rtl">
       <header className="topbar">
@@ -723,6 +1056,9 @@ function App() {
           </div>
         </div>
         <div className="topbar-actions">
+          <button className="button button-secondary" type="button" onClick={() => setView("launcher")}>
+            <FolderOpen size={16} aria-hidden="true" /> همهٔ پروژه‌ها
+          </button>
           <div className={"save-indicator " + saveState} title={saveState === "saved" ? "پروژه در MySQL محلی و IndexedDB ذخیره شده است." : undefined}>
             {saveState === "saving" || saveState === "loading" ? <LoaderCircle size={15} className="spin" /> : saveState === "saved" ? <Check size={15} /> : <AlertTriangle size={15} />}
             <span>{saveState === "saving" ? "در حال ذخیره" : saveState === "loading" ? "آماده‌سازی" : saveState === "saved" ? "ذخیره شد" : "ذخیره ناموفق"}</span>
@@ -744,7 +1080,7 @@ function App() {
               {projects.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
               {!projects.some((item) => item.id === project.id) && <option value={project.id}>{project.name}</option>}
             </select>
-            <button className="icon-button danger" type="button" aria-label="حذف پروژهٔ فعلی" onClick={() => void deleteCurrentProject()}>
+            <button className="icon-button danger" type="button" aria-label="حذف پروژهٔ فعلی" onClick={() => confirmDeleteProject(project)}>
               <Trash2 size={16} aria-hidden="true" />
             </button>
           </div>
@@ -919,7 +1255,7 @@ function App() {
                 if (file) void importProject(file);
                 event.currentTarget.value = "";
               }} />
-              <button className="button button-danger full" type="button" onClick={resetEverything}><RotateCcw size={16} /> بازنشانی همهٔ تنظیمات</button>
+              <button className="button button-danger full" type="button" onClick={confirmResetEverything}><RotateCcw size={16} /> بازنشانی همهٔ تنظیمات</button>
             </div>
             <p className="field-hint">ذخیرهٔ خودکار محلی با مکث کوتاه انجام می‌شود. تصاویر به سرور ارسال نمی‌شوند.</p>
           </SectionPanel>
@@ -997,7 +1333,8 @@ function App() {
         <span>Webzad Cover Studio</span>
         <span>پردازش تصویر و ذخیره‌سازی محلی در مرورگر</span>
       </footer>
-      {notice && <div className={"toast " + notice.kind} role={notice.kind === "error" ? "alert" : "status"}>{notice.kind === "success" ? <Check size={17} /> : <AlertTriangle size={17} />}<span>{notice.text}</span><button type="button" aria-label="بستن پیام" onClick={() => setNotice(null)}><X size={15} /></button></div>}
+      {noticeToast}
+      {dialog && <ConfirmationModal dialog={dialog} onClose={closeDialog} />}
     </div>
   );
 }
