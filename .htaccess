@@ -1,5 +1,8 @@
 RewriteEngine On
 
+# Keep the local SQL API on PHP when Apache serves the built Vite app.
+RewriteRule ^api(?:/.*)?$ api/index.php [QSA,L]
+
 # Serve built assets from Vite's output directory.
 RewriteRule ^dist/ - [END]
 RewriteCond %{DOCUMENT_ROOT}/dist/$1 -f

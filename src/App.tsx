@@ -54,6 +54,13 @@ import {
   saveProject,
 } from "./database";
 import { persistImageFile } from "./file-assets";
+import {
+  deleteSqlProject,
+  hydrateSqlAssets,
+  loadSqlBootstrap,
+  setSqlActiveProject,
+  syncProjectToSql,
+} from "./sql-api";
 import { clamp, naturalImageRect, safeCanvasPoint } from "./geometry";
 import {
   CANVAS_HEIGHT,
@@ -213,12 +220,42 @@ function App() {
           listProjects(),
           loadActiveProjectId(),
         ]);
-        const allProjects = storedProjects.sort((a, b) => b.updatedAt - a.updatedAt);
-        const active = allProjects.find((item) => item.id === activeId) ?? allProjects[0];
+        const localProjects = storedProjects.sort((a, b) => b.updatedAt - a.updatedAt);
+        const localBrand = storedBrand?.brand ?? createDefaultBrand();
+        let initialProjects = localProjects.length ? localProjects : [createDefaultProject()];
+        let initialBrand = localBrand;
+        let activeProject = initialProjects.find((item) => item.id === activeId) ?? initialProjects[0];
+        let sqlOnline = false;
+        try {
+          const remote = await loadSqlBootstrap();
+          sqlOnline = true;
+          if (remote.projects.length === 0 && !remote.brand) {
+            for (const item of initialProjects) {
+              await syncProjectToSql(item, initialBrand, activeProject.id);
+            }
+          } else {
+            initialProjects = remote.projects.length ? remote.projects : [createDefaultProject()];
+            initialBrand = remote.brand ?? createDefaultBrand();
+            activeProject = initialProjects.find((item) => item.id === remote.activeProjectId) ?? initialProjects[0];
+            await hydrateSqlAssets(initialProjects, initialBrand);
+            await syncProjectToSql(activeProject, initialBrand, activeProject.id);
+          }
+          await Promise.all(initialProjects.map((item) => saveProject(item)));
+          await saveBrand(initialBrand);
+          await saveActiveProjectId(activeProject.id);
+        } catch (error) {
+          sqlOnline = false;
+          showNotice(
+            "error",
+            "SQL در دسترس نیست؛ پروژه در مرورگر باز شد و برای همگام‌سازی بعدی نگه داشته می‌شود. " +
+              (error instanceof Error ? error.message : "اتصال MySQL را بررسی کنید."),
+          );
+        }
         if (cancelled) return;
-        setBrand(storedBrand?.brand ?? createDefaultBrand());
-        setProject(active ?? createDefaultProject());
-        setProjects(allProjects);
+        setBrand(initialBrand);
+        setProject(activeProject);
+        setProjects(initialProjects);
+        if (!sqlOnline) setSaveState("error");
         setBooted(true);
       } catch {
         if (cancelled) return;
@@ -263,6 +300,7 @@ function App() {
           saveBrand(brand),
           saveActiveProjectId(project.id),
         ]);
+        await syncProjectToSql(snapshot, brand, project.id);
         await collectOrphanAssets();
         await refreshProjects();
         setSaveState("saved");
@@ -347,13 +385,14 @@ function App() {
     try {
       const snapshot = { ...project, updatedAt: Date.now() };
       await Promise.all([saveProject(snapshot), saveBrand(brand), saveActiveProjectId(project.id)]);
+      await syncProjectToSql(snapshot, brand, project.id);
       await collectOrphanAssets();
       await refreshProjects();
       setSaveState("saved");
-      showNotice("success", "پروژه و تنظیمات برند ذخیره شد.");
+      showNotice("success", "پروژه و تنظیمات برند در MySQL و حافظهٔ محلی ذخیره شد.");
     } catch {
       setSaveState("error");
-      showNotice("error", "ذخیره انجام نشد؛ فضای IndexedDB مرورگر را بررسی کنید.");
+      showNotice("error", "ذخیره انجام نشد؛ اتصال MySQL و فضای IndexedDB را بررسی کنید.");
     }
   };
 
@@ -405,7 +444,13 @@ function App() {
     setProject(next);
     setActiveLayer(null);
     await saveActiveProjectId(next.id);
-    showNotice("success", "پروژهٔ تازه ساخته شد؛ تنظیمات برند حفظ شده است.");
+    try {
+      await setSqlActiveProject(next.id);
+      showNotice("success", "پروژهٔ تازه ساخته شد؛ تنظیمات برند حفظ شده است.");
+    } catch (error) {
+      setSaveState("error");
+      showNotice("error", error instanceof Error ? error.message : "پروژه در SQL فعال نشد.");
+    }
   };
 
   const loadNamedProject = async (id: string) => {
@@ -417,16 +462,34 @@ function App() {
     setProject(next);
     setActiveLayer(null);
     await saveActiveProjectId(next.id);
+    try {
+      await setSqlActiveProject(next.id);
+    } catch (error) {
+      setSaveState("error");
+      showNotice("error", error instanceof Error ? error.message : "پروژه در SQL فعال نشد.");
+    }
   };
 
   const deleteCurrentProject = async () => {
     if (!window.confirm("پروژهٔ «" + project.name + "» حذف شود؟ این کار قابل بازگشت نیست.")) return;
+    try {
+      await deleteSqlProject(project.id);
+    } catch (error) {
+      showNotice("error", error instanceof Error ? error.message : "حذف پروژه از SQL انجام نشد.");
+      return;
+    }
     await removeProject(project.id);
     const remaining = (await listProjects()).sort((a, b) => b.updatedAt - a.updatedAt);
     const next = remaining[0] ?? createDefaultProject();
     setProjects(remaining);
     setProject(next);
     await saveActiveProjectId(next.id);
+    try {
+      await setSqlActiveProject(next.id);
+    } catch (error) {
+      setSaveState("error");
+      showNotice("error", error instanceof Error ? error.message : "پروژهٔ فعال در SQL به‌روزرسانی نشد.");
+    }
     await collectOrphanAssets();
   };
 
@@ -565,10 +628,12 @@ function App() {
     try {
       const imported = await importProjectArchive(file);
       setProject(imported.project);
-      setBrand(imported.brand);
+      const importedBrand = imported.brand;
+      setBrand(importedBrand);
       await saveProject(imported.project);
-      await saveBrand(imported.brand);
+      await saveBrand(importedBrand);
       await saveActiveProjectId(imported.project.id);
+      await syncProjectToSql(imported.project, importedBrand, imported.project.id);
       await refreshProjects();
       showNotice("success", "پروژه و فایل‌های آن بازیابی شدند.");
     } catch (error) {
@@ -636,7 +701,7 @@ function App() {
           </div>
         </div>
         <div className="topbar-actions">
-          <div className={"save-indicator " + saveState}>
+          <div className={"save-indicator " + saveState} title={saveState === "saved" ? "پروژه در MySQL محلی و IndexedDB ذخیره شده است." : undefined}>
             {saveState === "saving" || saveState === "loading" ? <LoaderCircle size={15} className="spin" /> : saveState === "saved" ? <Check size={15} /> : <AlertTriangle size={15} />}
             <span>{saveState === "saving" ? "در حال ذخیره" : saveState === "loading" ? "آماده‌سازی" : saveState === "saved" ? "ذخیره شد" : "ذخیره ناموفق"}</span>
           </div>
