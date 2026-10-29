@@ -1,5 +1,7 @@
 # Portfolio Cover Studio
 
+[فارسی](README.fa.md)
+
 ### Website screenshots → consistent portfolio covers
 
 A portfolio cover maker for freelancers, web designers, and developers who want to present their projects with a consistent visual style.
