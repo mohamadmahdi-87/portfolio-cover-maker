@@ -14,15 +14,11 @@ For every project, I wanted a distinctive cover that followed the same visual te
 
 Recreating that layout manually for every project was repetitive. I wanted to replace the screenshots, update the project details, and create a new cover without starting from scratch.
 
-That's why I built Portfolio Cover Studio.
-
-I'm sharing it as an open-source tool for other freelancers who need the same thing.
+That's why I built Portfolio Cover Studio. I'm sharing it as an open-source tool for other freelancers who need the same thing.
 
 ## What it does
 
-Combine website screenshots, project details, technology icons, and your own branding into portfolio presentation images.
-
-Use a consistent layout across your projects while customizing the content for each one.
+Combine website screenshots, project details, technology icons, and your own branding into portfolio presentation images. Keep a consistent layout while customizing each project.
 
 ## Who it's for
 
@@ -40,24 +36,19 @@ Use a consistent layout across your projects while customizing the content for e
 
 ## Getting started
 
-See the installation and usage instructions below.
-
----
-
-Created by a freelancer, for freelancers.
-
-[Creator's website](https://webzad.ir)
-
-## Run locally
-
-Requirements: Node.js 20.19+ (or 22.12+) and npm.
+Requirements: Node.js 20.19+ (or 22.12+), npm, PHP CLI with `pdo_mysql`, and a local MySQL server. Laragon is supported.
 
 ```bash
 npm install
+```
+
+If your MySQL setup needs a password or custom connection details, copy `api/config.local.php.example` to `api/config.local.php` and edit the local file. It is ignored by Git. Then run both the PHP API and Vite:
+
+```bash
 npm run dev
 ```
 
-Vite prints the local address. The app runs in your browser and stores project data in that browser's IndexedDB; it has no backend and does not upload images.
+The app stores projects and image assets in MySQL and keeps a local IndexedDB cache. Images are handled by your own local setup; the included development API listens on `127.0.0.1`.
 
 To build the app:
 
@@ -65,4 +56,10 @@ To build the app:
 npm run build
 ```
 
-For sample input images, run `node scripts/create-test-fixtures.mjs`; the generated fixtures are already included under `public/test-fixtures/`.
+See [README.fa.md](README.fa.md) for the full Persian guide.
+
+---
+
+Created by a freelancer, for freelancers.
+
+[Creator's website](https://webzad.ir)
