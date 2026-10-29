@@ -38,6 +38,7 @@ import {
   createDefaultBrand,
   createDefaultLayer,
   createDefaultProject,
+  DEFAULT_WEBZAD_LOGO,
   IMPLEMENTATION_SUGGESTIONS,
   TEMPLATE_SUGGESTIONS,
 } from "./defaults";
@@ -53,7 +54,7 @@ import {
   saveBrand,
   saveProject,
 } from "./database";
-import { persistImageFile } from "./file-assets";
+import { ensureDefaultWebzadLogo, persistImageFile } from "./file-assets";
 import {
   deleteSqlProject,
   hydrateSqlAssets,
@@ -79,6 +80,13 @@ import { technologyCatalog } from "./technology-icons";
 type LayerSide = "front" | "back";
 type Notice = { kind: "success" | "error"; text: string } | null;
 type SaveState = "loading" | "saving" | "saved" | "error";
+
+const migrateBrandLogo = (brand: BrandSettings | null | undefined): BrandSettings => {
+  if (!brand) return createDefaultBrand();
+  return brand.logoDefaultApplied
+    ? brand
+    : { ...brand, logo: brand.logo ?? { ...DEFAULT_WEBZAD_LOGO }, logoDefaultApplied: true };
+};
 
 function LayerControls({
   side,
@@ -215,13 +223,14 @@ function App() {
     let cancelled = false;
     const initialize = async () => {
       try {
+        await ensureDefaultWebzadLogo();
         const [storedBrand, storedProjects, activeId] = await Promise.all([
           loadBrand(),
           listProjects(),
           loadActiveProjectId(),
         ]);
         const localProjects = storedProjects.sort((a, b) => b.updatedAt - a.updatedAt);
-        const localBrand = storedBrand?.brand ?? createDefaultBrand();
+        const localBrand = migrateBrandLogo(storedBrand?.brand);
         let initialProjects = localProjects.length ? localProjects : [createDefaultProject()];
         let initialBrand = localBrand;
         let activeProject = initialProjects.find((item) => item.id === activeId) ?? initialProjects[0];
@@ -235,7 +244,7 @@ function App() {
             }
           } else {
             initialProjects = remote.projects.length ? remote.projects : [createDefaultProject()];
-            initialBrand = remote.brand ?? createDefaultBrand();
+            initialBrand = migrateBrandLogo(remote.brand);
             activeProject = initialProjects.find((item) => item.id === remote.activeProjectId) ?? initialProjects[0];
             await hydrateSqlAssets(initialProjects, initialBrand);
             await syncProjectToSql(activeProject, initialBrand, activeProject.id);
@@ -515,7 +524,14 @@ function App() {
     });
   };
 
-  const resetBrand = () => setBrand(createDefaultBrand());
+  const resetBrand = async () => {
+    try {
+      await ensureDefaultWebzadLogo();
+      setBrand(createDefaultBrand());
+    } catch (error) {
+      showNotice("error", error instanceof Error ? error.message : "لوگوی پیش‌فرض بارگذاری نشد.");
+    }
+  };
 
   const swapLayers = () => {
     setProject((current) => ({ ...current, front: current.back, back: current.front }));
@@ -628,7 +644,13 @@ function App() {
     try {
       const imported = await importProjectArchive(file);
       setProject(imported.project);
-      const importedBrand = imported.brand;
+      const importedBrand = imported.brand.logoDefaultApplied
+        ? imported.brand
+        : {
+            ...imported.brand,
+            logo: imported.brand.logo ?? { ...DEFAULT_WEBZAD_LOGO },
+            logoDefaultApplied: true,
+          };
       setBrand(importedBrand);
       await saveProject(imported.project);
       await saveBrand(importedBrand);
@@ -787,7 +809,7 @@ function App() {
           </SectionPanel>
 
           <SectionPanel title="لوگوی برند" icon={<Palette size={17} />} onReset={resetBrand} resetLabel="بازنشانی تنظیمات برند">
-            <p className="field-hint">لوگوی اصلی را بارگذاری کنید؛ تا پیش از آن در کاور فقط نشانهٔ راهنمای پنل دیده می‌شود.</p>
+            <p className="field-hint">لوگوی تیم وبزاد به‌صورت پیش‌فرض استفاده می‌شود؛ در صورت نیاز می‌توانید آن را جایگزین یا حذف کنید.</p>
             <div className="layer-file-row">
               <UploadButton id="upload-logo" label={brand.logo ? "جایگزینی لوگو" : "بارگذاری لوگو"} onFile={(file) => void uploadLogo(file)} />
               {brand.logo && <button className="icon-button danger" type="button" aria-label="حذف لوگو" onClick={() => setBrand((current) => ({ ...current, logo: null }))}><Trash2 size={16} /></button>}

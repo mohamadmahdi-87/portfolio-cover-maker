@@ -45,6 +45,8 @@ export interface BrandSettings {
   fontFamily: LocalFontFamily;
   background: string;
   logo: AssetMeta | null;
+  /** Marks that the bundled default logo choice has been migrated for this brand. */
+  logoDefaultApplied?: boolean;
   logoVisible: boolean;
   logoBox: Rect;
   logoOpacity: number;

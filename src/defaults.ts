@@ -10,6 +10,15 @@ export const DEFAULT_SHADOW = {
   color: "#555555",
 };
 
+export const DEFAULT_WEBZAD_LOGO = {
+  id: "webzad-team-logo-default-v1",
+  name: "لوگوی تیم وبزاد",
+  mime: "image/png" as const,
+  width: 595,
+  height: 121,
+  size: 6534,
+};
+
 export const createDefaultLayer = (kind: "front" | "back"): ImageLayer => ({
   asset: null,
   visible: true,
@@ -27,7 +36,8 @@ export const createDefaultBrand = (): BrandSettings => ({
   schemaVersion: SCHEMA_VERSION,
   fontFamily: "Vazirmatn",
   background: "#E4E4E4",
-  logo: null,
+  logo: { ...DEFAULT_WEBZAD_LOGO },
+  logoDefaultApplied: true,
   logoVisible: true,
   logoBox: { x: 40, y: 75, width: 335, height: 220 },
   logoOpacity: 0.04,

@@ -20,6 +20,6 @@ describe("project data validation", () => {
     const brand = createDefaultBrand();
     expect(brand.signature.text).toBe("Designed by Webzad");
     expect(createDefaultProject().front.asset).toBeNull();
-    expect(brand.logo).toBeNull();
+    expect(brand.logo?.name).toBe("لوگوی تیم وبزاد");
   });
 });
