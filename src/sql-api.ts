@@ -10,6 +10,8 @@ export interface SqlBootstrap {
   assetIds: string[];
 }
 
+export const sqlStorageEnabled = import.meta.env.VITE_ENABLE_SQL_STORAGE === "true";
+
 const remoteAssets = new Set<string>();
 
 const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
@@ -26,6 +28,9 @@ const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
 };
 
 export const loadSqlBootstrap = async () => {
+  if (!sqlStorageEnabled) {
+    return { projects: [], brand: null, activeProjectId: null, assetIds: [] } satisfies SqlBootstrap;
+  }
   const data = await request<SqlBootstrap>("/api/bootstrap");
   if (!Array.isArray(data.projects) || !Array.isArray(data.assetIds)) {
     throw new Error("پاسخ پایگاه دادهٔ SQL معتبر نیست.");
@@ -64,6 +69,7 @@ const uploadAsset = async (meta: AssetMeta) => {
 };
 
 export const syncProjectToSql = async (project: ProjectState, brand: BrandSettings, activeProjectId = project.id) => {
+  if (!sqlStorageEnabled) return;
   for (const asset of collectAssets(project, brand)) {
     if (!remoteAssets.has(asset.id)) await uploadAsset(asset);
   }
@@ -75,6 +81,7 @@ export const syncProjectToSql = async (project: ProjectState, brand: BrandSettin
 };
 
 export const hydrateSqlAssets = async (projects: ProjectState[], brand: BrandSettings) => {
+  if (!sqlStorageEnabled) return;
   const assets = new Map<string, AssetMeta>();
   for (const project of projects) {
     collectAssets(project, brand).forEach((asset) => assets.set(asset.id, asset));
@@ -93,6 +100,7 @@ export const hydrateSqlAssets = async (projects: ProjectState[], brand: BrandSet
 };
 
 export const setSqlActiveProject = async (id: string) => {
+  if (!sqlStorageEnabled) return;
   await request<{ ok: true }>("/api/active", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -101,5 +109,6 @@ export const setSqlActiveProject = async (id: string) => {
 };
 
 export const deleteSqlProject = async (id: string) => {
+  if (!sqlStorageEnabled) return;
   await request<{ ok: true }>("/api/projects/" + encodeURIComponent(id), { method: "DELETE" });
 };

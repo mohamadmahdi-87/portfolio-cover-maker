@@ -14,7 +14,16 @@ function respond(int $status, array $data): never
 
 function body_json(): array
 {
-    $value = json_decode((string) file_get_contents('php://input'), true);
+    $maxBytes = 2 * 1024 * 1024;
+    $contentLength = filter_var($_SERVER['CONTENT_LENGTH'] ?? null, FILTER_VALIDATE_INT);
+    if ($contentLength !== false && $contentLength !== null && $contentLength > $maxBytes) {
+        respond(413, ['error' => 'بدنهٔ درخواست از حد مجاز بزرگ‌تر است.']);
+    }
+    $body = file_get_contents('php://input', false, null, 0, $maxBytes + 1);
+    if ($body === false || strlen($body) > $maxBytes) {
+        respond(413, ['error' => 'بدنهٔ درخواست از حد مجاز بزرگ‌تر است.']);
+    }
+    $value = json_decode($body, true);
     if (!is_array($value)) respond(400, ['error' => 'بدنهٔ درخواست JSON معتبر نیست.']);
     return $value;
 }
@@ -51,7 +60,16 @@ function prune_assets(PDO $pdo): void
 }
 
 try {
-    $pdo = webzad_database();
+    $remoteAddress = $_SERVER['REMOTE_ADDR'] ?? '';
+    if (!in_array($remoteAddress, ['127.0.0.1', '::1'], true)) {
+        respond(403, ['error' => 'این API فقط برای استفادهٔ محلی در دسترس است.']);
+    }
+    $origin = $_SERVER['HTTP_ORIGIN'] ?? '';
+    if ($origin !== '' && !preg_match('~^https?://(?:localhost|127\\.0\\.0\\.1|\\[::1\\])(?::[0-9]{1,5})?$~i', $origin)) {
+        respond(403, ['error' => 'مبدأ درخواست مجاز نیست.']);
+    }
+
+    $pdo = portfolio_database();
     $path = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
     $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
@@ -133,13 +151,34 @@ try {
             if (!is_array($metadata) || ($metadata['id'] ?? null) !== $id) respond(400, ['error' => 'مشخصات تصویر معتبر نیست.']);
             $mime = $metadata['mime'] ?? '';
             if (!in_array($mime, ['image/png', 'image/jpeg', 'image/webp'], true)) respond(415, ['error' => 'فرمت تصویر پشتیبانی نمی‌شود.']);
-            $content = file_get_contents('php://input');
+            $maxAssetBytes = 40 * 1024 * 1024;
+            $contentLength = filter_var($_SERVER['CONTENT_LENGTH'] ?? null, FILTER_VALIDATE_INT);
+            if ($contentLength !== false && $contentLength !== null && $contentLength > $maxAssetBytes) {
+                respond(413, ['error' => 'اندازهٔ تصویر از محدودیت مجاز بزرگ‌تر است.']);
+            }
+            $content = file_get_contents('php://input', false, null, 0, $maxAssetBytes + 1);
+            if ($content === false || strlen($content) > $maxAssetBytes) {
+                respond(413, ['error' => 'اندازهٔ تصویر از محدودیت مجاز بزرگ‌تر است.']);
+            }
             $size = strlen($content);
-            if ($size < 1 || $size > 40 * 1024 * 1024 || $size !== (int) ($metadata['size'] ?? 0)) {
+            if ($size < 1 || $size !== (int) ($metadata['size'] ?? 0)) {
                 respond(413, ['error' => 'اندازهٔ تصویر با محدودیت یا مشخصات فایل هم‌خوانی ندارد.']);
             }
             foreach (['name', 'width', 'height'] as $field) {
                 if (!isset($metadata[$field])) respond(400, ['error' => 'مشخصات تصویر کامل نیست.']);
+            }
+            if (!is_string($metadata['name']) || strlen($metadata['name']) > 180) {
+                respond(400, ['error' => 'نام تصویر معتبر نیست.']);
+            }
+            $imageInfo = @getimagesizefromstring($content);
+            if ($imageInfo === false || image_type_to_mime_type((int) $imageInfo[2]) !== $mime) {
+                respond(415, ['error' => 'محتوای فایل با نوع تصویر اعلام‌شده سازگار نیست.']);
+            }
+            $width = (int) $imageInfo[0];
+            $height = (int) $imageInfo[1];
+            if ($width < 1 || $height < 1 || $width > 32768 || $height > 32768 || $width * $height > 35000000 ||
+                (int) $metadata['width'] !== $width || (int) $metadata['height'] !== $height) {
+                respond(400, ['error' => 'ابعاد تصویر معتبر نیست.']);
             }
             $statement = $pdo->prepare('INSERT INTO assets (id, name, mime, width, height, size, content) VALUES (?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), mime = VALUES(mime), width = VALUES(width), height = VALUES(height), size = VALUES(size), content = VALUES(content)');
             $statement->bindValue(1, $id);
@@ -163,6 +202,6 @@ try {
 
     respond(404, ['error' => 'مسیر API پیدا نشد.']);
 } catch (Throwable $error) {
-    error_log('[webzad-sql] ' . $error->getMessage());
+    error_log('[portfolio-cover-api] ' . get_class($error));
     respond(500, ['error' => 'اتصال یا ذخیره‌سازی SQL ناموفق بود. تنظیمات MySQL را بررسی کنید.']);
 }

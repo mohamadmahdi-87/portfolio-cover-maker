@@ -1,7 +1,7 @@
 <?php
 declare(strict_types=1);
 
-function webzad_database(): PDO
+function portfolio_database(): PDO
 {
     static $pdo = null;
     if ($pdo instanceof PDO) return $pdo;
@@ -9,11 +9,11 @@ function webzad_database(): PDO
     $localConfigPath = __DIR__ . '/config.local.php';
     $localConfig = is_file($localConfigPath) ? require $localConfigPath : [];
     if (!is_array($localConfig)) throw new RuntimeException('تنظیمات محلی MySQL معتبر نیست.');
-    $host = getenv('WEBZAD_DB_HOST') ?: ($localConfig['host'] ?? '127.0.0.1');
-    $port = getenv('WEBZAD_DB_PORT') ?: ($localConfig['port'] ?? '3306');
-    $name = getenv('WEBZAD_DB_NAME') ?: ($localConfig['database'] ?? 'webzad_portfolio_cover');
-    $user = getenv('WEBZAD_DB_USER') ?: ($localConfig['user'] ?? 'root');
-    $password = getenv('WEBZAD_DB_PASSWORD') ?: ($localConfig['password'] ?? '');
+    $host = getenv('PORTFOLIO_DB_HOST') ?: ($localConfig['host'] ?? '127.0.0.1');
+    $port = getenv('PORTFOLIO_DB_PORT') ?: ($localConfig['port'] ?? '3306');
+    $name = getenv('PORTFOLIO_DB_NAME') ?: ($localConfig['database'] ?? 'portfolio_cover');
+    $user = getenv('PORTFOLIO_DB_USER') ?: ($localConfig['user'] ?? 'root');
+    $password = getenv('PORTFOLIO_DB_PASSWORD') ?: ($localConfig['password'] ?? '');
     if (!preg_match('/^[a-zA-Z0-9_-]+$/', $name)) {
         throw new RuntimeException('نام پایگاه داده معتبر نیست.');
     }

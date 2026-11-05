@@ -1,7 +1,8 @@
 RewriteEngine On
 
-# Keep the local SQL API on PHP when Apache serves the built Vite app.
-RewriteRule ^api(?:/.*)?$ api/index.php [QSA,L]
+# The optional SQL API is for the loopback-only development server. Keep it off
+# public Apache deployments by default.
+RewriteRule ^api(?:/.*)?$ - [F,END]
 
 # Serve built assets from Vite's output directory.
 RewriteRule ^dist/ - [END]
