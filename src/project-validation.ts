@@ -52,6 +52,11 @@ const validLayer = (value: unknown) => {
     within(value.y, -4000, 4000) &&
     within(value.width, 1, 2160) &&
     within(value.contentOffsetY, 0, MAX_IMAGE_DIMENSION) &&
+    (value.viewportHeight === undefined || within(value.viewportHeight, 1, 10800)) &&
+    (value.rotation === undefined || within(value.rotation, -45, 45)) &&
+    (value.perspective === undefined || within(value.perspective, -45, 45)) &&
+    (value.tilt === undefined || within(value.tilt, -45, 45)) &&
+    (value.yaw === undefined || within(value.yaw, -45, 45)) &&
     typeof shadow.enabled === "boolean" &&
     finiteFields(shadow, ["offsetX", "offsetY", "blur", "opacity"]) &&
     typeof shadow.color === "string"
@@ -85,6 +90,7 @@ export const validateProject = (value: unknown): value is ProjectState => {
     !value.customTech.every((entry) => isRecord(entry) && typeof entry.id === "string" && typeof entry.label === "string" && isAsset(entry.asset)) ||
     !(value.coverPreview === null || isAsset(value.coverPreview)) ||
     !validLayer(value.front) || !validLayer(value.back) ||
+    !(value.mobile === undefined || value.mobile === null || validLayer(value.mobile)) ||
     !isRecord(value.text) ||
     !validTextItem(value.text.siteName) || !validTextItem(value.text.template) || !validTextItem(value.text.implementation) ||
     !isRecord(value.technologies) ||
@@ -104,7 +110,7 @@ export const validateProject = (value: unknown): value is ProjectState => {
 /** Migrates older projects and adds an empty cached render where none was stored. */
 export const migrateProject = (value: unknown): ProjectState | null => {
   if (!isRecord(value)) return null;
-  if (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== SCHEMA_VERSION) return null;
+  if (value.schemaVersion !== 1 && value.schemaVersion !== 2 && value.schemaVersion !== 3 && value.schemaVersion !== 4 && value.schemaVersion !== 5 && value.schemaVersion !== 6 && value.schemaVersion !== 7 && value.schemaVersion !== 8) return null;
   const isOldSocialProject = value.schemaVersion < 3 && value.templateId === "instagram-feed";
   const social = getTemplateDefinition("instagram-feed");
   const previousDefaults = {
@@ -123,6 +129,21 @@ export const migrateProject = (value: unknown): ProjectState | null => {
   const migratedBack = isOldSocialProject && isRecord(value.back) && matches(value.back, previousDefaults.back)
     ? { ...value.back, ...social.layers.back }
     : value.back;
+  const showcaseLayers = getTemplateDefinition("device-showcase").layers;
+  const laptopFloat = getTemplateDefinition("laptop-float");
+  const resizeLaptopDefaultLayer = (layer: unknown) => {
+    if (value.templateId !== "laptop-float" || !isRecord(layer) || (layer.width !== 318 && layer.width !== 324)) return layer;
+    const factor = laptopFloat.layers.front.width / layer.width;
+    return {
+      ...layer,
+      width: laptopFloat.layers.front.width,
+      ...(isFiniteNumber(layer.viewportHeight) ? { viewportHeight: layer.viewportHeight * factor } : {}),
+    };
+  };
+  const withShowcaseYaw = (layer: unknown, side: "front" | "back" | "mobile") => {
+    if (value.templateId !== "device-showcase" || !isRecord(layer)) return layer;
+    return { ...layer, yaw: isFiniteNumber(layer.yaw) ? layer.yaw : showcaseLayers[side]?.yaw ?? 0 };
+  };
   const migratedText = isRecord(value.text) ? { ...value.text } : null;
   if (isOldSocialProject && isRecord(migratedText)) {
     for (const key of ["siteName", "template", "implementation"] as const) {
@@ -131,17 +152,30 @@ export const migrateProject = (value: unknown): ProjectState | null => {
       }
     }
   }
+  const oldLaptopTechPosition = { x: 50, y: 625, width: 350 };
   const migrated = {
     ...value,
     schemaVersion: SCHEMA_VERSION,
     templateId: value.templateId ?? "web-cover",
     coverPreview: value.coverPreview ?? null,
-    front: migratedFront,
-    back: migratedBack,
+    front: withoutCaptureSource(withShowcaseYaw(resizeLaptopDefaultLayer(migratedFront), "front")),
+    back: withoutCaptureSource(withShowcaseYaw(resizeLaptopDefaultLayer(migratedBack), "back")),
+    mobile: value.mobile === undefined || value.mobile === null ? null : withoutCaptureSource(withShowcaseYaw(value.mobile, "mobile")),
+    output: value.schemaVersion === 7 && value.templateId === "flat-device-showcase" && isRecord(value.output) && value.output.scale === 1
+      ? { ...value.output, scale: 3 }
+      : value.output,
     text: migratedText ?? value.text,
     technologies: isOldSocialProject && isRecord(value.technologies) && matches(value.technologies, previousDefaults.technologies)
       ? { ...value.technologies, ...social.technologies }
-      : value.technologies,
+      : value.templateId === "laptop-float" && isRecord(value.technologies) && matches(value.technologies, oldLaptopTechPosition)
+        ? { ...value.technologies, ...laptopFloat.technologies }
+        : value.technologies,
   };
   return validateProject(migrated) ? migrated : null;
+};
+
+const withoutCaptureSource = (value: unknown) => {
+  if (!isRecord(value)) return value;
+  const { captureSource: _removedCaptureSource, ...layer } = value;
+  return layer;
 };

@@ -37,6 +37,7 @@ import { importProjectArchive, buildProjectArchive } from "./archive";
 import {
   createDefaultBrand,
   createDefaultLayer,
+  createDefaultMobileLayer,
   createDefaultProject,
   DEFAULT_WEBZAD_LOGO,
   migrateBrandSettings,
@@ -64,7 +65,7 @@ import {
   setSqlActiveProject,
   syncProjectToSql,
 } from "./sql-api";
-import { clamp, naturalImageRect, outputDimensions, safeCanvasPoint } from "./geometry";
+import { clamp, floatingImageViewportHeight, naturalImageRect, outputDimensions, perspectiveQuad, safeCanvasPoint } from "./geometry";
 import {
   type AssetMeta,
   type BrandSettings,
@@ -77,11 +78,15 @@ import {
 } from "./model";
 import { layoutWarnings, renderCover } from "./renderer";
 import { technologyCatalog } from "./technology-icons";
-import { getLogoBox, getSignaturePosition, getTechnologyStyle, getTemplateDefinition } from "./templates";
+import laptopBaseUrl from "./assets/laptop-float-base.png";
+import flatDeviceBackgroundUrl from "./assets/flat-device-background.png";
+import { FLAT_DEVICE_LAYOUT, getLogoBox, getLogoOpacity, getSignaturePosition, getTechnologyStyle, getTemplateBackground, getTemplateDefinition, usesPerspectiveLayers } from "./templates";
 
-type LayerSide = "front" | "back";
+type LayerSide = "front" | "back" | "mobile";
 type Notice = { kind: "success" | "error"; text: string } | null;
-type SaveState = "loading" | "saving" | "saved" | "error";
+type SaveState = "loading" | "saving" | "saved" | "draft" | "error";
+
+const projectFingerprint = (project: ProjectState) => JSON.stringify({ ...project, updatedAt: 0 });
 type ConfirmationDialog = {
   mode: "confirm" | "notice";
   title: string;
@@ -98,10 +103,19 @@ const migrateBrandLogo = (brand: BrandSettings | null | undefined): BrandSetting
     : { ...migrated, logo: migrated.logo ?? { ...DEFAULT_WEBZAD_LOGO }, logoDefaultApplied: true };
 };
 
+const getLayer = (project: ProjectState, side: LayerSide): ImageLayer | null =>
+  side === "mobile" ? project.mobile : project[side];
+
+const getLayerPreviewHeight = (layer: ImageLayer, templateId: CoverTemplateId) =>
+  templateId === "laptop-float" && layer.asset
+    ? floatingImageViewportHeight(layer, layer.asset)
+    : layer.viewportHeight ?? layer.width * 0.72;
+
 function LayerControls({
   side,
   layer,
   canvasHeight,
+  templateId,
   selected,
   onSelect,
   onChange,
@@ -112,6 +126,7 @@ function LayerControls({
   side: LayerSide;
   layer: ImageLayer;
   canvasHeight: number;
+  templateId: CoverTemplateId;
   selected: boolean;
   onSelect: () => void;
   onChange: (layer: ImageLayer) => void;
@@ -119,7 +134,16 @@ function LayerControls({
   onRemove: () => void;
   onReset: () => void;
 }) {
-  const label = side === "front" ? "تصویر جلو" : "تصویر عقب";
+  const isShowcase = usesPerspectiveLayers(templateId);
+  const isFlatDevices = templateId === "flat-device-showcase";
+  const contentWidth = isFlatDevices
+    ? side === "mobile" ? FLAT_DEVICE_LAYOUT.phone.screen.width : FLAT_DEVICE_LAYOUT.monitor.screen.width
+    : layer.width;
+  const label = isFlatDevices ? (side === "mobile" ? "تصویر موبایل" : "تصویر دسکتاپ در مانیتور و لپ‌تاپ") : isShowcase
+    ? templateId === "laptop-float"
+      ? side === "front" ? "تصویر شناور جلو" : "تصویر شناور عقب"
+      : side === "mobile" ? "تصویر موبایل" : side === "front" ? "صفحهٔ دسکتاپ جلو" : "صفحهٔ دسکتاپ عقب"
+    : side === "front" ? "تصویر جلو" : "تصویر عقب";
   const set = (change: Partial<ImageLayer>) => onChange({ ...layer, ...change });
   const setShadow = (change: Partial<ImageLayer["shadow"]>) =>
     onChange({ ...layer, shadow: { ...layer.shadow, ...change } });
@@ -163,28 +187,46 @@ function LayerControls({
       ) : (
         <p className="field-hint">PNG، JPEG یا WebP؛ تا ۴۰ مگابایت</p>
       )}
-      <div className="field-grid three">
+      {!isFlatDevices && <div className="field-grid three">
         <NumberField id={side + "-x"} label="جایگاه X" value={layer.x} min={-1080} max={2160} onChange={(x) => set({ x })} />
         <NumberField id={side + "-y"} label="جایگاه Y" value={layer.y} min={-canvasHeight} max={canvasHeight * 2} onChange={(y) => set({ y })} />
         <NumberField id={side + "-width"} label="عرض" value={layer.width} min={20} max={2160} onChange={(width) => set({ width })} />
-      </div>
+      </div>}
+      {isShowcase && (
+        <div className="field-grid two perspective-fields">
+          <NumberField
+            id={side + "-viewport-height"}
+            label={templateId === "laptop-float" ? "ارتفاع قابل‌نمایش" : "ارتفاع پنجره"}
+            value={templateId === "laptop-float" && layer.asset ? floatingImageViewportHeight(layer, layer.asset) : layer.viewportHeight ?? 300}
+            min={templateId === "laptop-float" ? 1 : 80}
+            max={templateId === "laptop-float" && layer.asset ? Math.max(1, Math.min(10800, layer.width * layer.asset.height / layer.asset.width)) : 700}
+            onChange={(viewportHeight) => set({ viewportHeight })}
+          />
+          {isShowcase && <>
+          <NumberField id={side + "-rotation"} label="چرخش" value={layer.rotation ?? 0} min={-25} max={25} onChange={(rotation) => set({ rotation })} />
+          <NumberField id={side + "-perspective"} label="عمق پرسپکتیو" value={layer.perspective ?? 0} min={-35} max={35} onChange={(perspective) => set({ perspective })} />
+          <NumberField id={side + "-tilt"} label="کجی صفحه" value={layer.tilt ?? 0} min={-35} max={35} onChange={(tilt) => set({ tilt })} />
+          <NumberField id={side + "-yaw"} label="چرخش افقی؛ دور و نزدیک شدن لبه‌ها" value={layer.yaw ?? 0} min={-40} max={40} onChange={(yaw) => set({ yaw })} />
+          </>}
+        </div>
+      )}
       <RangeField
         id={side + "-content"}
-        label="جابجایی محتوای تصویر"
+        label={isFlatDevices ? "جابجایی تصویر داخل نمایشگر" : "جابجایی محتوای تصویر"}
         value={layer.contentOffsetY}
         min={0}
-        max={layer.asset ? Math.min(layer.asset.height * (layer.width / layer.asset.width), 20000) : 20000}
+        max={layer.asset ? Math.min(layer.asset.height * (contentWidth / layer.asset.width), 20000) : 20000}
         step={1}
         suffix=" px"
         onChange={(contentOffsetY) => set({ contentOffsetY })}
       />
-      <CheckField
+      {!isFlatDevices && (      <CheckField
         id={side + "-shadow"}
         label="سایه"
         checked={layer.shadow.enabled}
         onChange={(enabled) => setShadow({ enabled })}
-      />
-      {layer.shadow.enabled && (
+      />)}
+      {!isFlatDevices && layer.shadow.enabled && (
         <div className="field-grid three shadow-grid">
           <NumberField id={side + "-shadow-x"} label="سایه X" value={layer.shadow.offsetX} min={-120} max={120} onChange={(offsetX) => setShadow({ offsetX })} />
           <NumberField id={side + "-shadow-y"} label="سایه Y" value={layer.shadow.offsetY} min={-120} max={120} onChange={(offsetY) => setShadow({ offsetY })} />
@@ -205,12 +247,22 @@ function LayerControls({
   );
 }
 
-function ProjectCoverThumb({ project, background }: { project: ProjectState; background: string }) {
+function ProjectCoverThumb({ project, brand }: { project: ProjectState; brand: BrandSettings }) {
   const template = getTemplateDefinition(project.templateId);
-  const [images, setImages] = useState<{ front?: string; back?: string; exported?: string }>({});
+  const backViewportHeight = getLayerPreviewHeight(project.back, project.templateId);
+  const frontViewportHeight = getLayerPreviewHeight(project.front, project.templateId);
+  const [images, setImages] = useState<{ front?: string; back?: string; mobile?: string; exported?: string; logo?: string }>({});
   const frontId = project.front.visible ? project.front.asset?.id : undefined;
   const backId = project.back.visible ? project.back.asset?.id : undefined;
+  const mobileId = project.mobile?.visible ? project.mobile.asset?.id : undefined;
   const exportedId = project.coverPreview?.id;
+  const logoId = brand.logoVisible ? brand.logo?.id : undefined;
+  const flatScreenStyle = (screen: { x: number; y: number; width: number; height: number }) => ({
+    left: (screen.x / template.width) * 100 + "%",
+    top: (screen.y / template.height) * 100 + "%",
+    width: (screen.width / template.width) * 100 + "%",
+    height: (screen.height / template.height) * 100 + "%",
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -218,7 +270,7 @@ function ProjectCoverThumb({ project, background }: { project: ProjectState; bac
 
     const load = async () => {
       const entries = await Promise.all(
-        [frontId, backId, exportedId].map(async (id) => {
+        [frontId, backId, mobileId, exportedId, logoId].map(async (id) => {
           if (!id) return undefined;
           const record = await loadAsset(id);
           if (!record) return undefined;
@@ -235,7 +287,9 @@ function ProjectCoverThumb({ project, background }: { project: ProjectState; bac
       setImages({
         front: frontId ? urls.get(frontId) : undefined,
         back: backId ? urls.get(backId) : undefined,
+        mobile: mobileId ? urls.get(mobileId) : undefined,
         exported: exportedId ? urls.get(exportedId) : undefined,
+        logo: logoId ? urls.get(logoId) : undefined,
       });
     };
 
@@ -246,15 +300,32 @@ function ProjectCoverThumb({ project, background }: { project: ProjectState; bac
       cancelled = true;
       objectUrls.forEach((url) => URL.revokeObjectURL(url));
     };
-  }, [frontId, backId, exportedId]);
+  }, [frontId, backId, mobileId, exportedId, logoId]);
 
   return (
-    <div className="project-art" style={{ backgroundColor: background, aspectRatio: template.width + " / " + template.height }} aria-hidden="true">
-      {images.exported ? <img className="project-art-exported" src={images.exported} alt="" loading="lazy" /> : <>
-      {images.back && <img className="project-art-shot project-art-back" style={{ left: (project.back.x / template.width) * 100 + "%", top: (project.back.y / template.height) * 100 + "%", width: (project.back.width / template.width) * 100 + "%" }} src={images.back} alt="" loading="lazy" />}
-      {images.front && <img className="project-art-shot project-art-front" style={{ left: (project.front.x / template.width) * 100 + "%", top: (project.front.y / template.height) * 100 + "%", width: (project.front.width / template.width) * 100 + "%" }} src={images.front} alt="" loading="lazy" />}
-      {images.front || images.back ? (
-        <div className="project-art-copy" style={{ top: (project.text.siteName.y / template.height) * 100 + "%", width: (project.text.siteName.width / template.width) * 100 + "%" }}>
+    <div className={"project-art" + (project.templateId === "editorial-collage" ? " project-art-collage" : "") + (project.templateId === "device-showcase" ? " project-art-device-showcase" : "") + (project.templateId === "laptop-float" ? " project-art-laptop-float" : "") + (project.templateId === "flat-device-showcase" ? " project-art-flat-device-showcase" : "")} style={{ backgroundColor: getTemplateBackground(brand, project.templateId), aspectRatio: template.width + " / " + template.height }} aria-hidden="true">
+      {images.exported && project.templateId !== "flat-device-showcase" ? <img className="project-art-exported" src={images.exported} alt="" loading="lazy" /> : <>
+      {project.templateId === "laptop-float" && <img className="project-art-laptop-base" src={laptopBaseUrl} alt="" loading="lazy" />}
+      {project.templateId === "flat-device-showcase" && <>
+        <img className="project-art-flat-background" src={flatDeviceBackgroundUrl} alt="" loading="lazy" />
+        {images.front && <>
+          <img className="flat-thumb-shot flat-thumb-monitor-shot" style={flatScreenStyle(FLAT_DEVICE_LAYOUT.monitor.screen)} src={images.front} alt="" loading="lazy" />
+          <img className="flat-thumb-shot flat-thumb-laptop-shot" style={flatScreenStyle(FLAT_DEVICE_LAYOUT.laptop.screen)} src={images.front} alt="" loading="lazy" />
+        </>}
+        {images.mobile && <>
+          <img className="flat-thumb-shot flat-thumb-phone-shot" style={flatScreenStyle(FLAT_DEVICE_LAYOUT.phone.screen)} src={images.mobile} alt="" loading="lazy" />
+          <span className="flat-thumb-phone-notch" aria-hidden="true" />
+        </>}
+      </>}
+      {project.templateId !== "flat-device-showcase" && images.back && <img className="project-art-shot project-art-back" style={{ left: (project.back.x / template.width) * 100 + "%", top: (project.back.y / template.height) * 100 + "%", width: (project.back.width / template.width) * 100 + "%", height: (backViewportHeight / template.height) * 100 + "%", transform: `perspective(900px) rotateY(${project.back.yaw ?? 0}deg) rotateZ(${project.back.rotation ?? 0}deg)` }} src={images.back} alt="" loading="lazy" />}
+      {project.templateId !== "flat-device-showcase" && images.front && <img className="project-art-shot project-art-front" style={{ left: (project.front.x / template.width) * 100 + "%", top: (project.front.y / template.height) * 100 + "%", width: (project.front.width / template.width) * 100 + "%", height: (frontViewportHeight / template.height) * 100 + "%", transform: `perspective(900px) rotateY(${project.front.yaw ?? 0}deg) rotateZ(${project.front.rotation ?? 0}deg)` }} src={images.front} alt="" loading="lazy" />}
+      {project.templateId === "device-showcase" && images.mobile && <img className="project-art-shot project-art-mobile" style={{ left: (project.mobile?.x ?? 0) / template.width * 100 + "%", top: (project.mobile?.y ?? 0) / template.height * 100 + "%", width: (project.mobile?.width ?? 0) / template.width * 100 + "%", height: ((project.mobile?.viewportHeight ?? 326) / template.height) * 100 + "%", transform: `perspective(700px) rotateY(${project.mobile?.yaw ?? 0}deg) rotateZ(${project.mobile?.rotation ?? 0}deg)` }} src={images.mobile} alt="" loading="lazy" />}
+      {template.ornaments?.rings.map((ring, index) => <span key={"ring-" + index} className="project-art-ornament project-art-ring" style={{ left: (ring.x / template.width) * 100 + "%", top: (ring.y / template.height) * 100 + "%", width: (ring.radius * 2 / template.width) * 100 + "%", borderColor: template.ornaments?.color, opacity: ring.alpha }} />)}
+      {template.ornaments?.dots.map((dot, index) => <span key={"dot-" + index} className="project-art-ornament project-art-dot" style={{ left: (dot.x / template.width) * 100 + "%", top: (dot.y / template.height) * 100 + "%", width: (dot.radius * 2 / template.width) * 100 + "%", backgroundColor: template.ornaments?.color, opacity: dot.alpha }} />)}
+      {template.ornaments?.diamonds.map((diamond, index) => <span key={"diamond-" + index} className="project-art-ornament project-art-diamond" style={{ left: (diamond.x / template.width) * 100 + "%", top: (diamond.y / template.height) * 100 + "%", width: (diamond.size * 1.36 / template.width) * 100 + "%", backgroundColor: template.ornaments?.color, opacity: diamond.alpha }} />)}
+      {project.templateId !== "flat-device-showcase" && images.logo && brand.logo && <img className={"project-art-logo" + (project.templateId === "editorial-collage" ? "" : " project-art-logo-behind")} style={{ left: (getLogoBox(brand, project.templateId).x / template.width) * 100 + "%", top: (getLogoBox(brand, project.templateId).y / template.height) * 100 + "%", width: (getLogoBox(brand, project.templateId).width / template.width) * 100 + "%", height: (getLogoBox(brand, project.templateId).height / template.height) * 100 + "%", opacity: getLogoOpacity(brand, project.templateId) }} src={images.logo} alt="" loading="lazy" />}
+      {project.templateId === "laptop-float" || project.templateId === "flat-device-showcase" ? null : images.front || images.back || images.mobile ? (
+        <div className="project-art-copy" style={{ top: (project.text.siteName.y / template.height) * 100 + "%", left: (project.text.siteName.x / template.width) * 100 + "%", width: (project.text.siteName.width / template.width) * 100 + "%" }}>
           <span>{project.templateType || "کاور نمونه‌کار"}</span>
           <strong dir="auto">{project.siteName || "نام سایت"}</strong>
           <small dir="auto">{project.implementation}</small>
@@ -265,7 +336,7 @@ function ProjectCoverThumb({ project, background }: { project: ProjectState; bac
           <span>هنوز تصویری ندارد</span>
         </div>
       )}
-      <span className="project-art-signature" style={{ bottom: (template.signature.bottom / template.height) * 100 + "%" }}>Designed by Webzad</span>
+      {project.templateId !== "laptop-float" && project.templateId !== "flat-device-showcase" && <span className="project-art-signature" style={{ left: (getSignaturePosition(brand, project.templateId).x / template.width) * 100 + "%", bottom: ((template.height - getSignaturePosition(brand, project.templateId).y) / template.height) * 100 + "%", color: brand.signature.color }}>{brand.signature.text}</span>}
       </>}
     </div>
   );
@@ -274,14 +345,14 @@ function ProjectCoverThumb({ project, background }: { project: ProjectState; bac
 function LauncherHome({
   projects,
   activeProjectId,
-  background,
+  brand,
   onOpen,
   onCreate,
   onDelete,
 }: {
   projects: ProjectState[];
   activeProjectId: string;
-  background: string;
+  brand: BrandSettings;
   onOpen: (id: string) => void;
   onCreate: (templateId?: CoverTemplateId) => void;
   onDelete: (project: ProjectState) => void;
@@ -328,7 +399,7 @@ function LauncherHome({
               {projects.map((item) => (
                 <article className="saved-project-card" key={item.id}>
                   <button className="project-card-open" type="button" onClick={() => onOpen(item.id)} aria-label={`باز کردن پروژهٔ ${item.name || "بدون نام"}`}>
-                    <ProjectCoverThumb key={`${item.id}-${item.front.asset?.id ?? ""}-${item.back.asset?.id ?? ""}`} project={item} background={background} />
+                    <ProjectCoverThumb key={`${item.id}-${item.front.asset?.id ?? ""}-${item.back.asset?.id ?? ""}-${item.mobile?.asset?.id ?? ""}-${item.coverPreview?.id ?? ""}`} project={item} brand={brand} />
                     <span className="project-card-details">
                       <span className="project-card-title-row">
                         <strong>{item.name || "پروژهٔ بدون نام"}</strong>
@@ -374,6 +445,16 @@ function LauncherHome({
               <span className="template-art template-art-social" aria-hidden="true"><ImagePlus size={23} /><i /><i /></span>
               <span className="template-card-copy"><strong>کاور شبکه‌های اجتماعی</strong><small>چیدمان مربعی ۱:۱ با متن در چپ و تصاویر هم‌پوشان در راست</small></span>
               <span className="template-card-action">شروع با قالب ۱:۱ <Plus size={15} aria-hidden="true" /></span>
+            </button>
+            <button className="template-card template-card-ready template-card-collage" type="button" onClick={() => onCreate("editorial-collage")}>
+              <span className="template-art template-art-collage" aria-hidden="true"><ImagePlus size={23} /><i /><i /><b /></span>
+              <span className="template-card-copy"><strong>کلاژ نمونه‌کار</strong><small>دو تصویر بلند؛ عقب در بالا-چپ و تصویر جلو در پایین-راست</small></span>
+              <span className="template-card-action">شروع با قالب عمودی ۴:۵ <Plus size={15} aria-hidden="true" /></span>
+            </button>
+            <button className="template-card template-card-ready template-card-flat-devices" type="button" onClick={() => onCreate("flat-device-showcase")}>
+              <span className="template-art template-art-flat-devices" aria-hidden="true"><img src={flatDeviceBackgroundUrl} alt="" /></span>
+              <span className="template-card-copy"><strong>نمایش تخت دسکتاپ و موبایل</strong><small>یک تصویر در مانیتور و لپ‌تاپ، یک تصویر در موبایل؛ بدون زاویه و پرسپکتیو</small></span>
+              <span className="template-card-action">شروع با قالب دستگاه‌های تخت <Plus size={15} aria-hidden="true" /></span>
             </button>
             <div className="template-card template-card-disabled" aria-disabled="true">
               <span className="template-art template-art-project" aria-hidden="true"><Palette size={23} /><i /><i /></span>
@@ -479,6 +560,8 @@ function App() {
   const [activeLayer, setActiveLayer] = useState<LayerSide | null>(null);
   const [isExporting, setIsExporting] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
+  const savedProjectFingerprints = useRef(new Map<string, string>());
+  const savedBrandFingerprint = useRef<string | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragRef = useRef<{ side: LayerSide; point: { x: number; y: number } } | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
@@ -537,9 +620,9 @@ function App() {
         ]);
         const localProjects = storedProjects.sort((a, b) => b.updatedAt - a.updatedAt);
         const localBrand = migrateBrandLogo(storedBrand?.brand);
-        let initialProjects = localProjects.length ? localProjects : [createDefaultProject()];
+        let initialProjects = localProjects;
         let initialBrand = localBrand;
-        let activeProject = initialProjects.find((item) => item.id === activeId) ?? initialProjects[0];
+        let activeProject = initialProjects.find((item) => item.id === activeId) ?? initialProjects[0] ?? createDefaultProject();
         let sqlOnline = false;
         try {
           const remote = await loadSqlBootstrap();
@@ -549,15 +632,14 @@ function App() {
               await syncProjectToSql(item, initialBrand, activeProject.id);
             }
           } else {
-            initialProjects = remote.projects.length ? remote.projects : [createDefaultProject()];
+            initialProjects = remote.projects.length ? remote.projects : localProjects;
             initialBrand = migrateBrandLogo(remote.brand);
-            activeProject = initialProjects.find((item) => item.id === remote.activeProjectId) ?? initialProjects[0];
-            await hydrateSqlAssets(initialProjects, initialBrand);
-            await syncProjectToSql(activeProject, initialBrand, activeProject.id);
+            activeProject = initialProjects.find((item) => item.id === remote.activeProjectId) ?? initialProjects[0] ?? createDefaultProject();
+            if (remote.projects.length) await hydrateSqlAssets(initialProjects, initialBrand);
           }
           await Promise.all(initialProjects.map((item) => saveProject(item)));
-          await saveBrand(initialBrand);
-          await saveActiveProjectId(activeProject.id);
+          if (storedBrand || remote.brand) await saveBrand(initialBrand);
+          if (initialProjects.some((item) => item.id === activeProject.id)) await saveActiveProjectId(activeProject.id);
         } catch (error) {
           sqlOnline = false;
           showNotice(
@@ -567,10 +649,16 @@ function App() {
           );
         }
         if (cancelled) return;
+        savedProjectFingerprints.current = new Map(initialProjects.map((item) => [item.id, projectFingerprint(item)]));
+        if (!savedProjectFingerprints.current.has(activeProject.id)) {
+          savedProjectFingerprints.current.set(activeProject.id, projectFingerprint(activeProject));
+        }
+        savedBrandFingerprint.current = JSON.stringify(initialBrand);
         setBrand(initialBrand);
         setProject(activeProject);
         setProjects(initialProjects);
         if (!sqlOnline) setSaveState("error");
+        else setSaveState(initialProjects.some((item) => item.id === activeProject.id) ? "saved" : "draft");
         setBooted(true);
       } catch {
         if (cancelled) return;
@@ -606,6 +694,13 @@ function App() {
 
   useEffect(() => {
     if (!booted) return;
+    const projectIsDirty = savedProjectFingerprints.current.get(project.id) !== projectFingerprint(project);
+    const brandFingerprint = JSON.stringify(brand);
+    const brandIsDirty = savedBrandFingerprint.current !== brandFingerprint;
+    if (!projectIsDirty && !brandIsDirty) {
+      setSaveState(projects.some((item) => item.id === project.id) ? "saved" : "draft");
+      return;
+    }
     setSaveState("saving");
     const timer = window.setTimeout(async () => {
       try {
@@ -618,18 +713,21 @@ function App() {
         await syncProjectToSql(snapshot, brand, project.id);
         await collectOrphanAssets();
         await refreshProjects();
+        savedProjectFingerprints.current.set(project.id, projectFingerprint(snapshot));
+        savedBrandFingerprint.current = brandFingerprint;
         setSaveState("saved");
       } catch {
         setSaveState("error");
       }
     }, 650);
     return () => window.clearTimeout(timer);
-  }, [booted, project, brand, refreshProjects]);
+  }, [booted, project, brand, projects, refreshProjects]);
 
   const assetKey = [
     brand.logo?.id ?? "",
     project.front.asset?.id ?? "",
     project.back.asset?.id ?? "",
+    project.mobile?.asset?.id ?? "",
     ...project.customTech.map((item) => item.asset.id),
   ].join("|");
 
@@ -642,6 +740,7 @@ function App() {
         brand.logo?.id,
         project.front.asset?.id,
         project.back.asset?.id,
+        project.mobile?.asset?.id,
         ...project.customTech.map((item) => item.asset.id),
       ].filter((id): id is string => Boolean(id));
       const uniqueIds = [...new Set(ids)];
@@ -655,6 +754,20 @@ function App() {
             return [id, bitmap] as const;
           }),
         );
+        const laptopBase = project.templateId === "laptop-float"
+          ? await fetch(laptopBaseUrl).then((response) => {
+              if (!response.ok) throw new Error("ÙØ§ÛŒÙ„ Ù„Ù¾â€ŒØªØ§Ù¾ Ù‚Ø§Ù„Ø¨ Ù„ÙˆØ¯ Ù†Ø´Ø¯.");
+              return response.blob();
+            }).then((blob) => createImageBitmap(blob))
+          : undefined;
+        if (laptopBase) bitmaps.push(laptopBase);
+        const flatDeviceBackground = project.templateId === "flat-device-showcase"
+          ? await fetch(flatDeviceBackgroundUrl).then((response) => {
+              if (!response.ok) throw new Error("تصویر پس‌زمینهٔ قالب دستگاه‌ها بارگذاری نشد.");
+              return response.blob();
+            }).then((blob) => createImageBitmap(blob))
+          : undefined;
+        if (flatDeviceBackground) bitmaps.push(flatDeviceBackground);
         if (cancelled) {
           bitmaps.forEach((bitmap) => bitmap.close());
           return;
@@ -667,8 +780,11 @@ function App() {
         }
         setResources({
           logo: brand.logo ? map.get(brand.logo.id) : undefined,
+          laptopBase,
+          flatDeviceBackground,
           front: project.front.asset ? map.get(project.front.asset.id) : undefined,
           back: project.back.asset ? map.get(project.back.asset.id) : undefined,
+          mobile: project.mobile?.asset ? map.get(project.mobile.asset.id) : undefined,
           techCustom,
         });
         setResourcesReady(true);
@@ -685,17 +801,24 @@ function App() {
       cancelled = true;
       bitmaps.forEach((bitmap) => bitmap.close());
     };
-  }, [assetKey, brand.logo, project.customTech, project.front.asset, project.back.asset, showNotice]);
+  }, [assetKey, brand.logo, project.customTech, project.front.asset, project.back.asset, project.mobile?.asset, project.templateId, showNotice]);
 
   const updateProject = useCallback((change: (current: ProjectState) => ProjectState) => {
     setProject((current) => change(current));
   }, []);
 
   const setLayer = useCallback((side: LayerSide, layer: ImageLayer) => {
-    updateProject((current) => ({ ...current, [side]: layer }));
+    updateProject((current) => side === "mobile" ? { ...current, mobile: layer } : { ...current, [side]: layer });
   }, [updateProject]);
 
   const saveNow = async () => {
+    const hasUnsavedChanges =
+      savedProjectFingerprints.current.get(project.id) !== projectFingerprint(project) ||
+      savedBrandFingerprint.current !== JSON.stringify(brand);
+    if (!hasUnsavedChanges) {
+      setSaveState(projects.some((item) => item.id === project.id) ? "saved" : "draft");
+      return;
+    }
     setSaveState("saving");
     try {
       const snapshot = { ...project, updatedAt: Date.now() };
@@ -703,6 +826,8 @@ function App() {
       await syncProjectToSql(snapshot, brand, project.id);
       await collectOrphanAssets();
       await refreshProjects();
+      savedProjectFingerprints.current.set(project.id, projectFingerprint(snapshot));
+      savedBrandFingerprint.current = JSON.stringify(brand);
       setSaveState("saved");
       showNotice("success", "پروژه و تنظیمات برند در MySQL و حافظهٔ محلی ذخیره شد.");
     } catch {
@@ -714,7 +839,9 @@ function App() {
   const uploadLayer = async (side: LayerSide, file: File) => {
     try {
       const asset = await persistImageFile(file);
-      setProject((current) => ({ ...current, [side]: { ...current[side], asset } }));
+      setProject((current) => side === "mobile"
+        ? { ...current, mobile: { ...(current.mobile ?? createDefaultMobileLayer(current.templateId)), asset } }
+        : { ...current, [side]: { ...current[side], asset } });
       setActiveLayer(side);
       showNotice("success", "تصویر در مرورگر آماده شد.");
     } catch (error) {
@@ -755,20 +882,13 @@ function App() {
   };
 
   const createProject = async (templateId: CoverTemplateId = "web-cover") => {
-    const next = createDefaultProject(templateId === "instagram-feed" ? "پروژهٔ شبکهٔ اجتماعی" : "پروژهٔ جدید", templateId);
+      const projectName = templateId === "instagram-feed" ? "پروژهٔ شبکهٔ اجتماعی" : templateId === "editorial-collage" ? "کلاژ نمونه‌کار" : templateId === "device-showcase" ? "نمایش دسکتاپ و موبایل" : templateId === "flat-device-showcase" ? "نمایش تخت دستگاه‌ها" : templateId === "laptop-float" ? "لپ‌تاپ و تصاویر شناور" : "پروژهٔ جدید";
+    const next = createDefaultProject(projectName, templateId);
+    savedProjectFingerprints.current.set(next.id, projectFingerprint(next));
+    setSaveState("draft");
     setProject(next);
     setActiveLayer(null);
     setView("editor");
-    try {
-      await Promise.all([saveProject(next), saveActiveProjectId(next.id)]);
-      await refreshProjects();
-      await syncProjectToSql(next, brand, next.id);
-      await setSqlActiveProject(next.id);
-      showNotice("success", "پروژهٔ تازه ساخته شد؛ تنظیمات برند حفظ شده است.");
-    } catch (error) {
-      setSaveState("error");
-      showNotice("error", error instanceof Error ? error.message : "پروژه در SQL فعال نشد.");
-    }
   };
 
   const loadNamedProject = async (id: string) => {
@@ -777,6 +897,8 @@ function App() {
       showNotice("error", "پروژهٔ انتخاب‌شده پیدا نشد.");
       return;
     }
+    savedProjectFingerprints.current.set(next.id, projectFingerprint(next));
+    setSaveState("saved");
     setProject(next);
     setActiveLayer(null);
     setView("editor");
@@ -796,21 +918,23 @@ function App() {
       const remaining = (await listProjects()).sort((a, b) => b.updatedAt - a.updatedAt);
       if (target.id === project.id) {
         const next = remaining[0] ?? createDefaultProject();
-        if (remaining.length === 0) {
-          await saveProject(next);
-          remaining.push(next);
-        }
+        savedProjectFingerprints.current.set(next.id, projectFingerprint(next));
         setProject(next);
         setActiveLayer(null);
-        await saveActiveProjectId(next.id);
-        try {
-          await syncProjectToSql(next, brand, next.id);
-          await setSqlActiveProject(next.id);
-        } catch (error) {
-          setSaveState("error");
-          setProjects(remaining);
-          showNotice("error", error instanceof Error ? error.message : "پروژهٔ فعال در SQL به‌روزرسانی نشد.");
-          return false;
+        if (remaining.length > 0) {
+          setSaveState("saved");
+          await saveActiveProjectId(next.id);
+          try {
+            await setSqlActiveProject(next.id);
+          } catch (error) {
+            setSaveState("error");
+            setProjects(remaining);
+            showNotice("error", error instanceof Error ? error.message : "پروژهٔ فعال در SQL به‌روزرسانی نشد.");
+            return false;
+          }
+        } else {
+          setSaveState("draft");
+          setView("launcher");
         }
       }
       setProjects(remaining);
@@ -976,17 +1100,24 @@ function App() {
           ...previewDimensions,
           size: previewBlob.size,
         };
-        await saveAsset(coverPreview, previewBlob);
-        const updatedProject = { ...project, coverPreview, updatedAt: Date.now() };
-        setProject(updatedProject);
-        await saveProject(updatedProject);
-        try {
-          await syncProjectToSql(updatedProject, brand, updatedProject.id);
-        } catch {
-          setSaveState("error");
+        const hasUnsavedChanges =
+          savedProjectFingerprints.current.get(project.id) !== projectFingerprint(project) ||
+          savedBrandFingerprint.current !== JSON.stringify(brand);
+        const isAlreadySaved = projects.some((item) => item.id === project.id);
+        if (hasUnsavedChanges || isAlreadySaved) {
+          await saveAsset(coverPreview, previewBlob);
+          const updatedProject = { ...project, coverPreview, updatedAt: Date.now() };
+          savedProjectFingerprints.current.set(updatedProject.id, projectFingerprint(updatedProject));
+          setProject(updatedProject);
+          await saveProject(updatedProject);
+          try {
+            await syncProjectToSql(updatedProject, brand, updatedProject.id);
+          } catch {
+            setSaveState("error");
+          }
+          await collectOrphanAssets();
+          await refreshProjects();
         }
-        await collectOrphanAssets();
-        await refreshProjects();
       } catch {
         setSaveState("error");
         showNotice("error", "The image was downloaded, but its project card preview could not be saved.");
@@ -1019,7 +1150,6 @@ function App() {
     setIsImporting(true);
     try {
       const imported = await importProjectArchive(file);
-      setProject(imported.project);
       const importedBrand = imported.brand.logoDefaultApplied
         ? imported.brand
         : {
@@ -1027,6 +1157,9 @@ function App() {
             logo: imported.brand.logo ?? { ...DEFAULT_WEBZAD_LOGO },
             logoDefaultApplied: true,
           };
+      savedProjectFingerprints.current.set(imported.project.id, projectFingerprint(imported.project));
+      savedBrandFingerprint.current = JSON.stringify(importedBrand);
+      setProject(imported.project);
       setBrand(importedBrand);
       await saveProject(imported.project);
       await saveBrand(importedBrand);
@@ -1044,11 +1177,31 @@ function App() {
   const onCanvasPointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const canvas = event.currentTarget;
     const point = safeCanvasPoint(event.clientX, event.clientY, canvas.getBoundingClientRect(), project.templateId);
-    const hits = (["front", "back"] as const).filter((side) => {
-      const layer = project[side];
-      return layer.asset && layer.visible && point.x >= layer.x && point.x <= layer.x + layer.width && point.y >= layer.y;
+    if (project.templateId === "flat-device-showcase") {
+      const inScreen = (rect: { x: number; y: number; width: number; height: number }) =>
+        point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
+      if (project.mobile?.visible && inScreen(FLAT_DEVICE_LAYOUT.phone.screen)) setActiveLayer("mobile");
+      else if (project.front.visible && (inScreen(FLAT_DEVICE_LAYOUT.laptop.screen) || inScreen(FLAT_DEVICE_LAYOUT.monitor.screen))) setActiveLayer("front");
+      return;
+    }
+    const sides: LayerSide[] = project.templateId === "device-showcase" ? ["mobile", "front", "back"] : ["front", "back"];
+    const hits = sides.filter((side) => {
+      const layer = getLayer(project, side);
+      if (!layer?.asset || !layer.visible) return false;
+      if (usesPerspectiveLayers(project.templateId)) {
+        const quad = perspectiveQuad(layer, getLayerPreviewHeight(layer, project.templateId));
+        const points = [quad.topLeft, quad.topRight, quad.bottomRight, quad.bottomLeft];
+        let inside = false;
+        for (let index = 0, previous = points.length - 1; index < points.length; previous = index, index += 1) {
+          const currentPoint = points[index];
+          const previousPoint = points[previous];
+          if ((currentPoint.y > point.y) !== (previousPoint.y > point.y) && point.x < ((previousPoint.x - currentPoint.x) * (point.y - currentPoint.y)) / (previousPoint.y - currentPoint.y) + currentPoint.x) inside = !inside;
+        }
+        return inside;
+      }
+      return point.x >= layer.x && point.x <= layer.x + layer.width && point.y >= layer.y;
     });
-    const side = hits.includes("front") ? "front" : hits[0];
+    const side = hits[0];
     if (!side) return;
     setActiveLayer(side);
     dragRef.current = { side, point };
@@ -1060,14 +1213,38 @@ function App() {
     const canvas = event.currentTarget;
     const point = safeCanvasPoint(event.clientX, event.clientY, canvas.getBoundingClientRect(), project.templateId);
     const { side, point: previous } = dragRef.current;
-    const layer = project[side];
+    const layer = getLayer(project, side);
+    if (!layer) return;
     setLayer(side, { ...layer, x: clamp(layer.x + point.x - previous.x, -templateDefinition.width, templateDefinition.width * 2), y: clamp(layer.y + point.y - previous.y, -templateDefinition.height, templateDefinition.height * 2) });
     dragRef.current = { side, point };
   };
 
   const layerOutline = (side: LayerSide) => {
-    const layer = project[side];
-    if (!activeLayer || activeLayer !== side || !layer.asset || !layer.visible) return null;
+    const layer = getLayer(project, side);
+    if (!activeLayer || activeLayer !== side || !layer?.asset || !layer.visible) return null;
+    if (project.templateId === "flat-device-showcase") {
+      const screens = side === "mobile"
+        ? [FLAT_DEVICE_LAYOUT.phone.screen]
+        : [FLAT_DEVICE_LAYOUT.monitor.screen, FLAT_DEVICE_LAYOUT.laptop.screen];
+      const label = side === "mobile" ? "تصویر موبایل" : "تصویر دسکتاپ";
+      return <svg key={side} className="drag-outline-perspective" viewBox={`0 0 ${templateDefinition.width} ${templateDefinition.height}`} preserveAspectRatio="none" aria-hidden="true">
+        {screens.map((screen, index) => {
+          const points = [
+            `${screen.x},${screen.y}`,
+            `${screen.x + screen.width},${screen.y}`,
+            `${screen.x + screen.width},${screen.y + screen.height}`,
+            `${screen.x},${screen.y + screen.height}`,
+          ].join(" ");
+          return <g key={index}><polygon points={points} /><text x={screen.x + 8} y={screen.y + 18}>{label}</text></g>;
+        })}
+      </svg>;
+    }
+    if (usesPerspectiveLayers(project.templateId)) {
+      const quad = perspectiveQuad(layer, getLayerPreviewHeight(layer, project.templateId));
+      const points = [quad.topLeft, quad.topRight, quad.bottomRight, quad.bottomLeft].map((point) => `${(point.x / templateDefinition.width) * 100},${(point.y / templateDefinition.height) * 100}`).join(" ");
+      const label = project.templateId === "laptop-float" ? side === "front" ? "تصویر شناور جلو" : "تصویر شناور عقب" : side === "mobile" ? "تصویر موبایل" : side === "front" ? "صفحهٔ دسکتاپ جلو" : "صفحهٔ دسکتاپ عقب";
+      return <svg key={side} className="drag-outline-perspective" viewBox={`0 0 ${templateDefinition.width} ${templateDefinition.height}`} preserveAspectRatio="none" aria-hidden="true"><polygon points={points} /><text x={layer.x + 10} y={layer.y + 18}>{label}</text></svg>;
+    }
     const natural = naturalImageRect(layer, layer.asset, project.templateId);
     const height = Math.max(1, Math.min(templateDefinition.height - layer.y, natural.y + natural.height - layer.y));
     return (
@@ -1081,7 +1258,7 @@ function App() {
           height: (height / templateDefinition.height) * 100 + "%",
         }}
       >
-        {side === "front" ? "تصویر جلو" : "تصویر عقب"}
+        {side === "mobile" ? "تصویر موبایل" : side === "front" ? "تصویر جلو" : "تصویر عقب"}
       </div>
     );
   };
@@ -1106,7 +1283,7 @@ function App() {
         <LauncherHome
           projects={projects}
           activeProjectId={project.id}
-          background={brand.background}
+          brand={brand}
           onOpen={(id) => { void loadNamedProject(id); }}
           onCreate={(templateId) => { void createProject(templateId); }}
           onDelete={confirmDeleteProject}
@@ -1132,8 +1309,8 @@ function App() {
             <FolderOpen size={16} aria-hidden="true" /> همهٔ پروژه‌ها
           </button>
           <div className={"save-indicator " + saveState} title={saveState === "saved" ? "پروژه در MySQL محلی و IndexedDB ذخیره شده است." : undefined}>
-            {saveState === "saving" || saveState === "loading" ? <LoaderCircle size={15} className="spin" /> : saveState === "saved" ? <Check size={15} /> : <AlertTriangle size={15} />}
-            <span>{saveState === "saving" ? "در حال ذخیره" : saveState === "loading" ? "آماده‌سازی" : saveState === "saved" ? "ذخیره شد" : "ذخیره ناموفق"}</span>
+            {saveState === "saving" || saveState === "loading" ? <LoaderCircle size={15} className="spin" /> : saveState === "saved" ? <Check size={15} /> : saveState === "draft" ? <Save size={15} /> : <AlertTriangle size={15} />}
+            <span>{saveState === "saving" ? "در حال ذخیره" : saveState === "loading" ? "آماده‌سازی" : saveState === "saved" ? "ذخیره شد" : saveState === "draft" ? "پیش‌نویس" : "ذخیره ناموفق"}</span>
           </div>
           <button className="button button-secondary" type="button" onClick={() => void createProject()}>
             <Plus size={16} aria-hidden="true" /> پروژهٔ تازه
@@ -1161,7 +1338,7 @@ function App() {
             <input id="project-name" value={project.name} maxLength={80} onChange={(event) => { const name = event.currentTarget.value; setProject((current) => ({ ...current, name })); }} />
           </div>
 
-          <SectionPanel title="اطلاعات پروژه" icon={<Type size={17} />} initialOpen onReset={resetProjectFields} resetLabel="بازنشانی اطلاعات پروژه">
+          {project.templateId !== "flat-device-showcase" && <SectionPanel title="اطلاعات پروژه" icon={<Type size={17} />} initialOpen onReset={resetProjectFields} resetLabel="بازنشانی اطلاعات پروژه">
             <div className="field">
               <label htmlFor="site-name">نام سایت</label>
               <input id="site-name" value={project.siteName} maxLength={160} onChange={(event) => { const siteName = event.currentTarget.value; setProject((current) => ({ ...current, siteName })); }} />
@@ -1177,19 +1354,26 @@ function App() {
               <input id="implementation" list="implementation-suggestions" value={project.implementation} onChange={(event) => { const implementation = event.currentTarget.value; setProject((current) => ({ ...current, implementation })); }} />
               <datalist id="implementation-suggestions">{IMPLEMENTATION_SUGGESTIONS.map((value) => <option key={value} value={value} />)}</datalist>
             </div>
-          </SectionPanel>
+          </SectionPanel>}
 
           <SectionPanel title="تصاویر سایت" icon={<ImagePlus size={17} />} initialOpen onReset={() => {
-            setProject((current) => ({ ...current, front: { ...createDefaultLayer("front", current.templateId), asset: current.front.asset }, back: { ...createDefaultLayer("back", current.templateId), asset: current.back.asset } }));
-          }} resetLabel="بازنشانی جایگاه دو تصویر">
-            <div className="swap-row">
-              <span>دو تصویر با هم‌پوشانی نمایش داده می‌شوند</span>
+            setProject((current) => ({
+              ...current,
+              front: { ...createDefaultLayer("front", current.templateId), asset: current.front.asset },
+              back: { ...createDefaultLayer("back", current.templateId), asset: current.back.asset },
+              ...(current.templateId === "device-showcase" || current.templateId === "flat-device-showcase" ? { mobile: { ...createDefaultMobileLayer(current.templateId), asset: current.mobile?.asset ?? null } } : {}),
+            }));
+          }} resetLabel={project.templateId === "flat-device-showcase" ? "بازنشانی تنظیمات دو تصویر" : project.templateId === "device-showcase" ? "بازنشانی جایگاه سه تصویر" : "بازنشانی جایگاه دو تصویر"}>
+            {project.templateId === "flat-device-showcase" && <p className="field-hint">یک تصویر داخل مانیتور و لپ‌تاپ نمایش داده می‌شود و تصویر دوم داخل موبایل.</p>}
+            {project.templateId !== "flat-device-showcase" && <div className="swap-row">
+              <span>{project.templateId === "device-showcase" ? "دو صفحهٔ دسکتاپ و یک تصویر موبایل با پرسپکتیو نمایش داده می‌شوند" : project.templateId === "laptop-float" ? "دو تصویر روی صفحهٔ لپ‌تاپ با پرسپکتیو و سایه شناور می‌شوند" : "دو تصویر با هم‌پوشانی نمایش داده می‌شوند"}</span>
               <button className="button button-quiet" type="button" onClick={swapLayers}><ArrowLeftRight size={15} aria-hidden="true" /> جابه‌جایی جلو و عقب</button>
-            </div>
+            </div>}
             <LayerControls
               side="front"
               layer={project.front}
               canvasHeight={templateDefinition.height}
+              templateId={project.templateId}
               selected={activeLayer === "front"}
               onSelect={() => setActiveLayer("front")}
               onChange={(layer) => setLayer("front", layer)}
@@ -1201,10 +1385,11 @@ function App() {
               }}
               onReset={() => setLayer("front", { ...createDefaultLayer("front", project.templateId), asset: project.front.asset, visible: project.front.visible })}
             />
-            <LayerControls
+            {project.templateId !== "flat-device-showcase" && (            <LayerControls
               side="back"
               layer={project.back}
               canvasHeight={templateDefinition.height}
+              templateId={project.templateId}
               selected={activeLayer === "back"}
               onSelect={() => setActiveLayer("back")}
               onChange={(layer) => setLayer("back", layer)}
@@ -1215,10 +1400,26 @@ function App() {
                 void removeAssetFromCurrent(old);
               }}
               onReset={() => setLayer("back", { ...createDefaultLayer("back", project.templateId), asset: project.back.asset, visible: project.back.visible })}
-            />
+            />)}
+            {(project.templateId === "device-showcase" || project.templateId === "flat-device-showcase") && project.mobile && <LayerControls
+              side="mobile"
+              layer={project.mobile}
+              canvasHeight={templateDefinition.height}
+              templateId={project.templateId}
+              selected={activeLayer === "mobile"}
+              onSelect={() => setActiveLayer("mobile")}
+              onChange={(layer) => setLayer("mobile", layer)}
+              onUpload={(file) => void uploadLayer("mobile", file)}
+              onRemove={() => {
+                const old = project.mobile?.asset ?? null;
+                if (project.mobile) setLayer("mobile", { ...project.mobile, asset: null });
+                void removeAssetFromCurrent(old);
+              }}
+              onReset={() => setLayer("mobile", { ...createDefaultMobileLayer(project.templateId), asset: project.mobile?.asset ?? null, visible: project.mobile?.visible ?? true })}
+            />}
           </SectionPanel>
 
-          <SectionPanel title="لوگوی برند" icon={<Palette size={17} />} onReset={resetBrand} resetLabel="بازنشانی تنظیمات برند">
+          {project.templateId !== "flat-device-showcase" && <SectionPanel title="لوگوی برند" icon={<Palette size={17} />} onReset={resetBrand} resetLabel="بازنشانی تنظیمات برند">
             <p className="field-hint">لوگوی تیم وبزاد به‌صورت پیش‌فرض استفاده می‌شود؛ در صورت نیاز می‌توانید آن را جایگزین یا حذف کنید.</p>
             <div className="layer-file-row">
               <UploadButton id="upload-logo" label={brand.logo ? "جایگزینی لوگو" : "بارگذاری لوگو"} onFile={(file) => void uploadLogo(file)} />
@@ -1232,7 +1433,7 @@ function App() {
               <NumberField id="logo-width" label="عرض محدوده" value={activeLogoBox.width} min={1} max={2160} onChange={(width) => updateLogoBox({ width })} />
               <NumberField id="logo-height" label="ارتفاع محدوده" value={activeLogoBox.height} min={1} max={templateDefinition.height * 2} onChange={(height) => updateLogoBox({ height })} />
             </div>
-            <RangeField id="logo-opacity" label="شفافیت لوگو" value={Math.round(brand.logoOpacity * 100)} min={0} max={100} suffix="٪" onChange={(logoOpacity) => setBrand((current) => ({ ...current, logoOpacity: logoOpacity / 100 }))} />
+            <RangeField id="logo-opacity" label="شفافیت لوگو" value={Math.round(getLogoOpacity(brand, project.templateId) * 100)} min={0} max={100} suffix="٪" onChange={(logoOpacity) => setBrand((current) => ({ ...current, logoOpacities: { ...current.logoOpacities, [project.templateId]: logoOpacity / 100 }, ...(project.templateId === "web-cover" ? { logoOpacity: logoOpacity / 100 } : {}) }))} />
             <div className="subsection-label">امضای پایین کاور</div>
             <div className="field">
               <label htmlFor="signature">متن امضا</label>
@@ -1244,9 +1445,9 @@ function App() {
               <NumberField id="signature-size" label="اندازهٔ قلم" value={brand.signature.fontSize} min={12} max={80} onChange={(fontSize) => setBrand((current) => ({ ...current, signature: { ...current.signature, fontSize } }))} />
               <ColorField id="signature-color" label="رنگ امضا" value={brand.signature.color} onChange={(color) => setBrand((current) => ({ ...current, signature: { ...current.signature, color } }))} />
             </div>
-          </SectionPanel>
+          </SectionPanel>}
 
-          <SectionPanel title="تکنولوژی‌ها" icon={<Layers size={17} />} onReset={() => setProject((current) => ({ ...current, selectedTech: [], customTech: [] }))} resetLabel="پاک‌کردن فهرست تکنولوژی‌ها">
+          {project.templateId !== "flat-device-showcase" && <SectionPanel title="تکنولوژی‌ها" icon={<Layers size={17} />} onReset={() => setProject((current) => ({ ...current, selectedTech: [], customTech: [] }))} resetLabel="پاک‌کردن فهرست تکنولوژی‌ها">
             <p className="field-hint">نشان‌های رسمی محلی و بدون متن روی کاور رسم می‌شوند.</p>
             <div className="technology-grid">
               {technologyCatalog.map((technology) => (
@@ -1291,10 +1492,10 @@ function App() {
               <NumberField id="tech-size" label="اندازهٔ آیکون" value={activeTechnologyStyle.size} min={18} max={120} onChange={(iconSize) => setBrand((current) => ({ ...current, iconSizes: { ...current.iconSizes, [project.templateId]: iconSize }, ...(project.templateId === "web-cover" ? { iconSize } : {}) }))} />
               <NumberField id="tech-gap" label="فاصله" value={activeTechnologyStyle.gap} min={0} max={80} onChange={(iconGap) => setBrand((current) => ({ ...current, iconGaps: { ...current.iconGaps, [project.templateId]: iconGap }, ...(project.templateId === "web-cover" ? { iconGap } : {}) }))} />
             </div>
-          </SectionPanel>
+          </SectionPanel>}
 
-          <SectionPanel title="ظاهر و چیدمان پیشرفته" icon={<Settings2 size={17} />}>
-            <ColorField id="background" label="رنگ پس‌زمینه" value={brand.background} onChange={(background) => setBrand((current) => ({ ...current, background }))} />
+          {project.templateId !== "flat-device-showcase" && <SectionPanel title="ظاهر و چیدمان پیشرفته" icon={<Settings2 size={17} />}>
+            {project.templateId === "laptop-float" ? <p className="field-hint">پس‌زمینه و تصویر لپ‌تاپ از خود قالب می‌آیند.</p> : <ColorField id="background" label="رنگ پس‌زمینه" value={getTemplateBackground(brand, project.templateId)} onChange={(background) => setBrand((current) => project.templateId === "device-showcase" ? ({ ...current, backgrounds: { ...current.backgrounds, [project.templateId]: background } }) : ({ ...current, background }))} />}
             <div className="field">
               <label htmlFor="font-family">فونت محلی کاور</label>
               <select id="font-family" value={brand.fontFamily} onChange={(event) => { const fontFamily = event.currentTarget.value === "Inter" ? "Inter" : "Vazirmatn"; setBrand((current) => ({ ...current, fontFamily })); }}>
@@ -1315,7 +1516,7 @@ function App() {
               <NumberField id="tech-width" label="عرض ردیف" value={project.technologies.width} min={1} max={1080} onChange={(width) => setProject((current) => ({ ...current, technologies: { ...current.technologies, width } }))} />
             </div>
             <p className="field-hint">تنظیمات متن ابتدا اندازه را کوچک می‌کنند، سپس تا دو خط می‌شکنند؛ متن بلند حذف نمی‌شود.</p>
-          </SectionPanel>
+          </SectionPanel>}
 
           <SectionPanel title="ذخیره و بازیابی" icon={<FolderOpen size={17} />}>
             <div className="storage-actions">
@@ -1382,11 +1583,12 @@ function App() {
               />
               {layerOutline("back")}
               {layerOutline("front")}
+              {layerOutline("mobile")}
               {!brand.logo && <div className="logo-placeholder">لوگو پس از بارگذاری در این بخش نمایش داده می‌شود</div>}
-              {!project.front.asset && !project.back.asset && (
+              {!project.front.asset && !project.back.asset && !project.mobile?.asset && (
                 <div className="preview-placeholder">
                   <ImagePlus size={22} aria-hidden="true" />
-                  <span>برای تکمیل کاور، دو اسکرین‌شات بلند را بارگذاری کنید</span>
+                  <span>{project.templateId === "flat-device-showcase" ? "دو تصویر دسکتاپ و موبایل را بارگذاری کنید" : project.templateId === "device-showcase" ? "دو اسکرین‌شات دسکتاپ و یک اسکرین‌شات موبایل را بارگذاری کنید" : project.templateId === "laptop-float" ? "دو اسکرین‌شات سایت را برای صفحه‌های شناور بارگذاری کنید" : "برای تکمیل کاور، دو اسکرین‌شات بلند را بارگذاری کنید"}</span>
                   <small>پیش‌نمایش راهنما در خروجی نهایی وجود ندارد</small>
                 </div>
               )}

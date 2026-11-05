@@ -1,68 +1,72 @@
-# Portfolio Cover Studio
+# سازندهٔ کاور نمونه‌کار وبزاد
 
-[فارسی](README.fa.md)
+ابزار محلی برای ساخت کاور نمونه‌کار وب (1080×848)، کاور شبکهٔ اجتماعی مربعی (1080×1080)، کلاژ عمودی (1080×1350)، نمایش دسکتاپ و موبایل (1080×810) و قالب لپ‌تاپ با دو صفحهٔ شناور (1080×720) است. تصویرها با Canvas و در مرورگر پردازش می‌شوند. پروژه‌ها، تنظیمات برند و فایل‌های تصویری در MySQL محلی Laragon ذخیره می‌شوند؛ IndexedDB نیز نسخهٔ cache و پشتیبان محلی نگه می‌دارد.
 
-### Turn website screenshots into consistent portfolio covers
+## پیش‌نیازها
 
-A browser based tool for freelancers, web designers, and developers who want to present their projects with a consistent visual style.
+- Node.js نسخهٔ 20.19 یا جدیدتر، یا 22.12 یا جدیدتر
+- npm
+- Laragon MySQL با پایگاه دادهٔ `webzad_portfolio_cover`
+- PHP CLI با افزونهٔ `pdo_mysql`
+- مرورگر مدرن با پشتیبانی از Canvas، IndexedDB و `createImageBitmap`
 
-## Why I built this
+در این محیط، PowerShell اجرای shim `npm.ps1` را با سیاست فعلی محدود می‌کند؛ در PowerShell از `npm.cmd` به‌جای `npm` استفاده کنید. تنظیمات سراسری PowerShell لازم نیست تغییر کند.
 
-I'm a freelancer, and I needed a better way to showcase the websites I had built. I wanted every project to have its own cover while following a shared layout, so my portfolio would look polished without rebuilding the design from scratch each time.
+## نصب و اجرا
 
-I'm sharing Portfolio Cover Studio as an open-source tool for other freelancers who need the same thing.
-
-## What it does
-
-Combine website screenshots, project details, technology icons, and your own branding into a portfolio image. Customize the layout while keeping a consistent style across projects.
-
-Two templates are available:
-
-- **Web portfolio cover:** 1080 × 848
-- **Social media cover:** 1080 × 1080 (1:1)
-
-Both use the same editor, image handling, and PNG/WebP export flow.
-
-## Who it's for
-
-- Freelancers showcasing completed projects
-- Web designers presenting website designs
-- Developers building a visual portfolio
-- Creative studios maintaining a consistent presentation style
-
-## Use cases
-
-- Project covers for freelance marketplaces
-- Website design portfolio thumbnails
-- Project showcase images for personal websites
-- Visual presentations of completed client work
-
-## Getting started
-
-Requirements: Node.js 20.19+ (or 22.12+), npm, PHP CLI with `pdo_mysql`, and a local MySQL server. Laragon is supported.
-
-```bash
+```powershell
 npm install
+npm.cmd run dev
 ```
 
-If your MySQL setup needs a password or custom connection details, copy `api/config.local.php.example` to `api/config.local.php` and edit the local file. It is ignored by Git. Then start the local PHP API and Vite:
+این دستور PHP API محلی و Vite را با هم اجرا می‌کند. Vite نشانی و پورت فعال را در ترمینال نمایش می‌دهد. PHP API فقط روی `127.0.0.1:8787` گوش می‌دهد.
 
-```bash
-npm run dev
+پیش‌فرض اتصال MySQL، `127.0.0.1:3306` با کاربر `root` و رمز خالی Laragon است. اگر MySQL شما رمز دارد، فایل `api/config.local.php.example` را به `api/config.local.php` کپی کنید و رمز را در آن وارد کنید. این فایل در Git نادیده گرفته می‌شود و رمز فقط در سمت PHP خوانده می‌شود.
+
+```powershell
+Copy-Item api/config.local.php.example api/config.local.php
 ```
 
-In PowerShell, use `npm.cmd run dev` if the `npm` command is blocked by the current execution policy. The development API listens on `127.0.0.1:8787`.
+نام میزبان، پورت و نام پایگاه داده نیز با متغیرهای `WEBZAD_DB_HOST`، `WEBZAD_DB_PORT` و `WEBZAD_DB_NAME` قابل‌تنظیم‌اند. API در صورت داشتن دسترسی، پایگاه داده و جدول‌های لازم را خودکار می‌سازد. رمز پایگاه داده در مرورگر یا فایل‌های ارسالی پروژه قرار نمی‌گیرد.
 
-Projects, brand settings, and image assets are stored in MySQL, with a local IndexedDB cache. For the schema, template layout decisions, and instructions for adding another template, see the [architecture and templates guide](./داکیومنت/راهنمای-معماری-و-قالب‌ها.md).
-
-To build the app:
+## ساخت و بررسی کد
 
 ```bash
+npm run typecheck
+npm test
 npm run build
 ```
 
----
+`npm test` تست‌های واحد چیدمان، تناسب تصویر، مختصات پیش‌نمایش، جهت متن و اعتبارسنجی/سریال‌سازی پروژه را اجرا می‌کند.
 
-Created by a freelancer, for freelancers.
+## روش استفاده
 
-[Creator's website](https://webzad.ir)
+1. صفحهٔ آغاز، پروژه‌های ذخیره‌شده را با پیش‌نمایش، عنوان و تاریخ آخرین ویرایش نشان می‌دهد. پروژه را برای ادامه باز کنید یا با دکمهٔ حذف و تأیید مودال آن را پاک کنید.
+2. از «کاور نمونه‌کار وب»، «کاور شبکه‌های اجتماعی»، «کلاژ نمونه‌کار»، «نمایش سایت در دسکتاپ و موبایل» یا «لپ‌تاپ و صفحه‌های شناور» پروژهٔ تازه بسازید. قالب لپ‌تاپ بوم ۳:۲ دارد؛ بدنهٔ لپ‌تاپ و سایهٔ آن زیر دو اسکرین‌شات قاب‌دار و شناور رسم می‌شوند. تصویر عقب هم داخل نمایشگر لپ‌تاپ استفاده می‌شود.
+3. در پنل «تصاویر سایت» اسکرین‌شات‌های خودتان را بارگذاری کنید: قالب لپ‌تاپ دو تصویر می‌گیرد، قالب دستگاه‌ها دو اسکرین‌شات دسکتاپ و یک موبایل، و بقیهٔ قالب‌ها دو تصویر دارند. جایگاه، عرض، برش، سایه، چرخش و پرسپکتیو هر لایه قابل‌تنظیم است. محتوای تصویر با تبدیل چهارگوشه‌ای پرسپکتیو می‌گیرد و کشیده نمی‌شود.
+4. اطلاعات پروژه، لوگو و فناوری‌ها را تنظیم کنید. می‌توانید لایهٔ فعال را در پیش‌نمایش بکشید یا مختصات، زاویه و مقدار پرسپکتیو را عددی وارد کنید.
+5. قالب را هنگام ساخت پروژه انتخاب کنید؛ سپس اندازهٔ خروجی را انتخاب و «دانلود کاور» را بزنید.
+6. ذخیرهٔ خودکار در MySQL انجام می‌شود. اطلاعات پروژه در جدول `projects`، تنظیمات برند در `app_settings` و فایل‌های تصویری به شکل BLOB در `assets` نگه‌داری می‌شوند. IndexedDB نسخهٔ محلی را برای بارگذاری سریع cache می‌کند.
+7. در نخستین اجرا، اگر SQL خالی باشد، داده‌های موجود در IndexedDB به MySQL منتقل می‌شوند. بعد از آن MySQL مرجع بازیابی پروژه‌هاست. برای انتقال یا پشتیبان‌گیری از ZIP داخلی برنامه هم استفاده کنید.
+
+مودال‌های تأیید و خطا با صفحه‌کلید هم کار می‌کنند: `Escape` پنجره را می‌بندد و `Enter` دکمهٔ اصلی را اجرا می‌کند.
+
+## نمونه‌تصویرهای آزمایشی
+
+`public/test-fixtures/sample-front.png` و `sample-back.png` تصویرهای ساختگی و محلی هستند؛ برند، وب‌سایت یا محتوای واقعی را نمایش نمی‌دهند. برای بازتولید آن‌ها اجرا کنید:
+
+```bash
+node scripts/create-test-fixtures.mjs
+```
+
+## محدودیت‌های واقعی
+
+- هر فایل تصویر حداکثر 40 مگابایت، هر ضلع حداکثر 32,768 پیکسل و هر تصویر حداکثر 35 میلیون پیکسل است تا مصرف حافظهٔ مرورگر محدود بماند.
+- خروجی تصویر با PNG یا WebP در مقیاس 1×، 2× یا 3× تولید می‌شود. پشتیبانی واقعی WebP از نوع Blob بررسی می‌شود.
+- فایل‌های کاربر به PNG، JPEG و WebP محدودند؛ SVG بارگذاری نمی‌شود.
+- اگر MySQL در دسترس نباشد، برنامه می‌تواند cache محلی را باز کند، اما وضعیت ذخیره‌سازی خطا نشان می‌دهد تا روشن شود همگام‌سازی SQL انجام نشده است.
+- PHP API در توسعه روی loopback اجرا می‌شود. برای استقرار عمومی باید از یک حساب MySQL محدود و HTTPS استفاده کنید؛ مقادیر پیش‌فرض فقط برای Laragon محلی هستند.
+
+## راهنمای معماری و افزودن قالب
+
+تصمیم‌های طراحی، مشخصات قالب‌های فعال و گام‌های افزودن قالب بعدی در [`داکیومنت/راهنمای-معماری-و-قالب‌ها.md`](./داکیومنت/راهنمای-معماری-و-قالب‌ها.md) نگهداری می‌شوند. این فایل مرجع زندهٔ تیم است و باید با تغییرات فنی یا بصری به‌روزرسانی شود.

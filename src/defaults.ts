@@ -26,17 +26,34 @@ export const createDefaultLayer = (kind: "front" | "back", templateId: CoverTemp
   x: getTemplateDefinition(templateId).layers[kind].x,
   y: getTemplateDefinition(templateId).layers[kind].y,
   width: getTemplateDefinition(templateId).layers[kind].width,
+  viewportHeight: getTemplateDefinition(templateId).layers[kind].viewportHeight,
+  rotation: getTemplateDefinition(templateId).layers[kind].rotation,
+  perspective: getTemplateDefinition(templateId).layers[kind].perspective,
+  tilt: getTemplateDefinition(templateId).layers[kind].tilt,
+  yaw: getTemplateDefinition(templateId).layers[kind].yaw,
   contentOffsetY: 0,
   shadow: {
     ...DEFAULT_SHADOW,
-    enabled: kind === "front",
+    enabled: templateId === "laptop-float" || kind === "front",
+    ...(templateId === "laptop-float" ? { offsetX: 2, offsetY: 18, blur: 26, opacity: 0.23, color: "#343434" } : {}),
   },
 });
+
+export const createDefaultMobileLayer = (templateId: CoverTemplateId = "device-showcase"): ImageLayer => {
+  const preset = getTemplateDefinition(templateId).layers.mobile ?? getTemplateDefinition("device-showcase").layers.mobile!;
+  return {
+    asset: null, visible: true, x: preset.x, y: preset.y, width: preset.width,
+    viewportHeight: preset.viewportHeight, rotation: preset.rotation,
+    perspective: preset.perspective, tilt: preset.tilt, yaw: preset.yaw, contentOffsetY: 0,
+    shadow: { ...DEFAULT_SHADOW, enabled: true },
+  };
+};
 
 export const createDefaultBrand = (): BrandSettings => ({
   schemaVersion: SCHEMA_VERSION,
   fontFamily: "Vazirmatn",
   background: "#E4E4E4",
+  backgrounds: { "device-showcase": "#f8f9f8", "laptop-float": "#d2d2d2", "flat-device-showcase": "#476fa7" },
   logo: { ...DEFAULT_WEBZAD_LOGO },
   logoDefaultApplied: true,
   logoVisible: true,
@@ -44,8 +61,13 @@ export const createDefaultBrand = (): BrandSettings => ({
   logoBoxes: {
     "web-cover": { ...getTemplateDefinition("web-cover").logoBox },
     "instagram-feed": { ...getTemplateDefinition("instagram-feed").logoBox },
+    "editorial-collage": { ...getTemplateDefinition("editorial-collage").logoBox },
+    "device-showcase": { ...getTemplateDefinition("device-showcase").logoBox },
+    "laptop-float": { ...getTemplateDefinition("laptop-float").logoBox },
+    "flat-device-showcase": { ...getTemplateDefinition("flat-device-showcase").logoBox },
   },
   logoOpacity: 0.04,
+  logoOpacities: { "web-cover": 0.04, "instagram-feed": 0.04, "editorial-collage": 0.9, "device-showcase": 0.9, "laptop-float": 0.12, "flat-device-showcase": 0.9 },
   signature: {
     text: "Designed by Webzad",
     x: 50,
@@ -55,18 +77,26 @@ export const createDefaultBrand = (): BrandSettings => ({
     positions: {
       "web-cover": { x: 50, y: 766 },
       "instagram-feed": { x: 50, y: getTemplateDefinition("instagram-feed").height - getTemplateDefinition("instagram-feed").signature.bottom },
+      "editorial-collage": { x: 50, y: getTemplateDefinition("editorial-collage").height - getTemplateDefinition("editorial-collage").signature.bottom },
+      "device-showcase": { x: 830, y: getTemplateDefinition("device-showcase").height - getTemplateDefinition("device-showcase").signature.bottom },
+      "laptop-float": { x: getTemplateDefinition("laptop-float").signature.x, y: getTemplateDefinition("laptop-float").height - getTemplateDefinition("laptop-float").signature.bottom },
+      "flat-device-showcase": { x: getTemplateDefinition("flat-device-showcase").signature.x, y: getTemplateDefinition("flat-device-showcase").height - getTemplateDefinition("flat-device-showcase").signature.bottom },
     },
   },
   iconSize: 58,
   iconGap: 12,
-  iconSizes: { "web-cover": 58, "instagram-feed": 68 },
-  iconGaps: { "web-cover": 12, "instagram-feed": 14 },
+  iconSizes: { "web-cover": 58, "instagram-feed": 68, "editorial-collage": 48, "device-showcase": 34, "laptop-float": 26, "flat-device-showcase": 34 },
+  iconGaps: { "web-cover": 12, "instagram-feed": 14, "editorial-collage": 10, "device-showcase": 10, "laptop-float": 8, "flat-device-showcase": 10 },
 });
 
 export const migrateBrandSettings = (brand: BrandSettings | null | undefined): BrandSettings => {
   if (!brand) return createDefaultBrand();
   const web = getTemplateDefinition("web-cover");
   const social = getTemplateDefinition("instagram-feed");
+  const collage = getTemplateDefinition("editorial-collage");
+  const deviceShowcase = getTemplateDefinition("device-showcase");
+  const laptopFloat = getTemplateDefinition("laptop-float");
+  const flatDeviceShowcase = getTemplateDefinition("flat-device-showcase");
   return {
     ...brand,
     schemaVersion: SCHEMA_VERSION,
@@ -74,16 +104,37 @@ export const migrateBrandSettings = (brand: BrandSettings | null | undefined): B
       ...brand.iconSizes,
       "web-cover": brand.iconSizes?.["web-cover"] ?? brand.iconSize,
       "instagram-feed": brand.iconSizes?.["instagram-feed"] ?? 68,
+      "editorial-collage": brand.iconSizes?.["editorial-collage"] ?? 48,
+      "device-showcase": brand.iconSizes?.["device-showcase"] ?? 34,
+      "laptop-float": brand.iconSizes?.["laptop-float"] ?? 26,
+      "flat-device-showcase": brand.iconSizes?.["flat-device-showcase"] ?? 34,
     },
     iconGaps: {
       ...brand.iconGaps,
       "web-cover": brand.iconGaps?.["web-cover"] ?? brand.iconGap,
       "instagram-feed": brand.iconGaps?.["instagram-feed"] ?? 14,
+      "editorial-collage": brand.iconGaps?.["editorial-collage"] ?? 10,
+      "device-showcase": brand.iconGaps?.["device-showcase"] ?? 10,
+      "laptop-float": brand.iconGaps?.["laptop-float"] ?? 8,
+      "flat-device-showcase": brand.iconGaps?.["flat-device-showcase"] ?? 10,
     },
     logoBoxes: {
       ...brand.logoBoxes,
       "web-cover": brand.logoBoxes?.["web-cover"] ?? brand.logoBox ?? { ...web.logoBox },
       "instagram-feed": brand.logoBoxes?.["instagram-feed"] ?? { ...social.logoBox },
+      "editorial-collage": brand.logoBoxes?.["editorial-collage"] ?? { ...collage.logoBox },
+      "device-showcase": brand.logoBoxes?.["device-showcase"] ?? { ...deviceShowcase.logoBox },
+      "laptop-float": brand.logoBoxes?.["laptop-float"] ?? { ...laptopFloat.logoBox },
+      "flat-device-showcase": brand.logoBoxes?.["flat-device-showcase"] ?? { ...flatDeviceShowcase.logoBox },
+    },
+    logoOpacities: {
+      ...brand.logoOpacities,
+      "web-cover": brand.logoOpacities?.["web-cover"] ?? brand.logoOpacity,
+      "instagram-feed": brand.logoOpacities?.["instagram-feed"] ?? brand.logoOpacity,
+      "editorial-collage": brand.logoOpacities?.["editorial-collage"] ?? 0.9,
+      "device-showcase": brand.logoOpacities?.["device-showcase"] ?? 0.9,
+      "laptop-float": brand.logoOpacities?.["laptop-float"] ?? 0.12,
+      "flat-device-showcase": brand.logoOpacities?.["flat-device-showcase"] ?? 0.9,
     },
     signature: {
       ...brand.signature,
@@ -93,6 +144,10 @@ export const migrateBrandSettings = (brand: BrandSettings | null | undefined): B
         "instagram-feed": brand.signature.positions?.["instagram-feed"]?.x === 50 && brand.signature.positions?.["instagram-feed"]?.y === 1295
           ? { x: 50, y: social.height - social.signature.bottom }
           : brand.signature.positions?.["instagram-feed"] ?? { x: brand.signature.x, y: social.height - social.signature.bottom },
+        "editorial-collage": brand.signature.positions?.["editorial-collage"] ?? { x: brand.signature.x, y: collage.height - collage.signature.bottom },
+        "device-showcase": brand.signature.positions?.["device-showcase"] ?? { x: 830, y: deviceShowcase.height - deviceShowcase.signature.bottom },
+        "laptop-float": brand.signature.positions?.["laptop-float"] ?? { x: laptopFloat.signature.x, y: laptopFloat.height - laptopFloat.signature.bottom },
+        "flat-device-showcase": brand.signature.positions?.["flat-device-showcase"] ?? { x: flatDeviceShowcase.signature.x, y: flatDeviceShowcase.height - flatDeviceShowcase.signature.bottom },
       },
     },
   };
@@ -114,6 +169,7 @@ export const createDefaultProject = (name = "پروژهٔ جدید", templateId:
   coverPreview: null,
   front: createDefaultLayer("front", templateId),
   back: createDefaultLayer("back", templateId),
+  mobile: templateId === "device-showcase" || templateId === "flat-device-showcase" ? createDefaultMobileLayer(templateId) : null,
   text: {
     siteName: {
       ...definition.text.siteName,
@@ -132,7 +188,7 @@ export const createDefaultProject = (name = "پروژهٔ جدید", templateId:
     },
   },
   technologies: { ...definition.technologies },
-  output: { format: "png", scale: 1, quality: 0.92 },
+  output: { format: "png", scale: templateId === "flat-device-showcase" ? 3 : 1, quality: 0.92 },
   updatedAt: Date.now(),
   });
 };

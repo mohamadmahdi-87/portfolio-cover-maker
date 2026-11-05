@@ -1,4 +1,4 @@
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 8;
 export const CANVAS_WIDTH = 1080;
 export const CANVAS_HEIGHT = 848;
 export const MAX_ASSET_BYTES = 40 * 1024 * 1024;
@@ -11,8 +11,7 @@ export type ExportScale = 1 | 2 | 3;
 export type ExportFormat = "png" | "webp";
 export type TextDirection = "auto" | "rtl" | "ltr";
 export type LocalFontFamily = "Vazirmatn" | "Inter";
-export type CoverTemplateId = "web-cover" | "instagram-feed";
-
+export type CoverTemplateId = "web-cover" | "instagram-feed" | "editorial-collage" | "device-showcase" | "laptop-float" | "flat-device-showcase";
 export interface AssetMeta {
   id: string;
   name: string;
@@ -38,6 +37,13 @@ export interface ImageLayer {
   y: number;
   width: number;
   contentOffsetY: number;
+  /** Fixed visible viewport for perspective-based showcases; content stays fit-to-width and is clipped. */
+  viewportHeight?: number;
+  rotation?: number;
+  perspective?: number;
+  tilt?: number;
+  /** Horizontal-axis turn: the signed near/far edge depth that makes one side larger. */
+  yaw?: number;
   shadow: ShadowSettings;
 }
 
@@ -45,6 +51,7 @@ export interface BrandSettings {
   schemaVersion: number;
   fontFamily: LocalFontFamily;
   background: string;
+  backgrounds?: Partial<Record<CoverTemplateId, string>>;
   logo: AssetMeta | null;
   /** Marks that the bundled default logo choice has been migrated for this brand. */
   logoDefaultApplied?: boolean;
@@ -52,6 +59,7 @@ export interface BrandSettings {
   logoBox: Rect;
   logoBoxes?: Partial<Record<CoverTemplateId, Rect>>;
   logoOpacity: number;
+  logoOpacities?: Partial<Record<CoverTemplateId, number>>;
   signature: {
     text: string;
     x: number;
@@ -91,6 +99,7 @@ export interface ProjectState {
   coverPreview: AssetMeta | null;
   front: ImageLayer;
   back: ImageLayer;
+  mobile: ImageLayer | null;
   text: {
     siteName: TextItem;
     template: TextItem;
@@ -103,8 +112,11 @@ export interface ProjectState {
 
 export interface RenderResources {
   logo?: CanvasImageSource;
+  laptopBase?: CanvasImageSource;
+  flatDeviceBackground?: CanvasImageSource;
   front?: CanvasImageSource;
   back?: CanvasImageSource;
+  mobile?: CanvasImageSource;
   techCustom: Map<string, CanvasImageSource>;
 }
 

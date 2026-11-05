@@ -78,6 +78,7 @@ export const collectOrphanAssets = async () => {
   for (const project of projects) {
     add(project.front.asset);
     add(project.back.asset);
+    add(project.mobile?.asset);
     add(project.coverPreview);
     for (const item of project.customTech) add(item.asset);
   }

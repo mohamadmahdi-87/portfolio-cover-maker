@@ -43,6 +43,7 @@ const collectAssets = (project: ProjectState, brand: BrandSettings) => {
   const assets = [
     project.front.asset,
     project.back.asset,
+    project.mobile?.asset ?? null,
     project.coverPreview,
     brand.logo,
     ...project.customTech.map((item) => item.asset),
