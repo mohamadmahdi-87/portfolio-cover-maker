@@ -2,7 +2,7 @@ import { openDB, type DBSchema } from "idb";
 import type { AssetMeta, BrandSettings, ProjectState } from "./model";
 import { migrateProject } from "./project-validation";
 
-interface WebzadDB extends DBSchema {
+interface PortfolioCoverDB extends DBSchema {
   projects: { key: string; value: ProjectState };
   assets: { key: string; value: { id: string; blob: Blob; meta: AssetMeta } };
   settings: {
@@ -11,12 +11,37 @@ interface WebzadDB extends DBSchema {
   };
 }
 
-const database = openDB<WebzadDB>("webzad-cover-studio", 1, {
+const database = openDB<PortfolioCoverDB>("portfolio-cover-studio", 1, {
   upgrade(db) {
     db.createObjectStore("projects", { keyPath: "id" });
     db.createObjectStore("assets", { keyPath: "id" });
     db.createObjectStore("settings", { keyPath: "key" });
   },
+}).then(async (db) => {
+  const migrationKey = "legacy-webzad-storage-migrated";
+  if (await db.get("settings", migrationKey)) return db;
+
+  if (typeof indexedDB.databases === "function") {
+    const databases = await indexedDB.databases();
+    if (databases.some((item) => item.name === "webzad-cover-studio")) {
+      const legacy = await openDB<PortfolioCoverDB>("webzad-cover-studio", 1);
+      try {
+        for (const project of await legacy.getAll("projects")) {
+          if (!(await db.get("projects", project.id))) await db.put("projects", project);
+        }
+        for (const asset of await legacy.getAll("assets")) {
+          if (!(await db.get("assets", asset.id))) await db.put("assets", asset);
+        }
+        for (const setting of await legacy.getAll("settings")) {
+          if (!(await db.get("settings", setting.key))) await db.put("settings", setting);
+        }
+      } finally {
+        legacy.close();
+      }
+    }
+    await db.put("settings", { key: migrationKey });
+  }
+  return db;
 });
 
 export const saveProject = async (project: ProjectState) => {

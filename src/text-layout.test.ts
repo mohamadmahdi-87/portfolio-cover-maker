@@ -20,14 +20,21 @@ describe("text layout", () => {
     expect(result.overflow).toBe(false);
   });
 
+  it("keeps a short multiword title on one line when a smaller size prevents row overlap", () => {
+    const result = fitText(measurementContext(), "Synthetic Example", 340, 44, 25);
+    expect(result.fontSize).toBeLessThan(44);
+    expect(result.lines).toEqual(["Synthetic Example"]);
+    expect(result.overflow).toBe(false);
+  });
+
   it("reports unbreakable overflow instead of silently dropping it", () => {
     const result = fitText(measurementContext(), "بسیارطولانیبدونفاصله", 70, 44, 20);
     expect(result.overflow).toBe(true);
   });
 
   it("chooses text direction without reversing Persian text", () => {
-    expect(textDirection("پروژه Webzad ۱۲", "auto")).toBe("rtl");
-    expect(textDirection("Webzad Studio", "auto")).toBe("ltr");
-    expect(textDirection("Webzad", "rtl")).toBe("rtl");
+    expect(textDirection("پروژهٔ آزمایشی ۱۲", "auto")).toBe("rtl");
+    expect(textDirection("Portfolio Studio", "auto")).toBe("ltr");
+    expect(textDirection("Studio", "rtl")).toBe("rtl");
   });
 });

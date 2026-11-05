@@ -53,8 +53,6 @@ export interface BrandSettings {
   background: string;
   backgrounds?: Partial<Record<CoverTemplateId, string>>;
   logo: AssetMeta | null;
-  /** Marks that the bundled default logo choice has been migrated for this brand. */
-  logoDefaultApplied?: boolean;
   logoVisible: boolean;
   logoBox: Rect;
   logoBoxes?: Partial<Record<CoverTemplateId, Rect>>;

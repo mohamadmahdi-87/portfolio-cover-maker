@@ -40,11 +40,30 @@ describe("project data validation", () => {
     expect(validateProject({ ...project, front: { ...project.front, width: Number.NaN } })).toBe(false);
   });
 
-  it("keeps local brand defaults independent from project content", () => {
+  it("starts without a forced logo or signature", () => {
     const brand = createDefaultBrand();
-    expect(brand.signature.text).toBe("Designed by Webzad");
+    expect(brand.signature.text).toBe("");
     expect(createDefaultProject().front.asset).toBeNull();
-    expect(brand.logo?.name).toBe("لوگوی تیم وبزاد");
+    expect(brand.logo).toBeNull();
+  });
+
+  it("removes only the bundled creator defaults when migrating saved brand settings", () => {
+    const legacy = createDefaultBrand();
+    const migrated = migrateBrandSettings({
+      ...legacy,
+      logo: { id: "webzad-team-logo-default-v1", name: "old default", mime: "image/png", width: 595, height: 121, size: 6534 },
+      signature: { ...legacy.signature, text: "Designed by Webzad" },
+    });
+    expect(migrated.logo).toBeNull();
+    expect(migrated.signature.text).toBe("");
+
+    const custom = migrateBrandSettings({
+      ...legacy,
+      logo: { id: "user-logo", name: "my logo", mime: "image/png", width: 100, height: 100, size: 50 },
+      signature: { ...legacy.signature, text: "Designed by Example Studio" },
+    });
+    expect(custom.logo?.id).toBe("user-logo");
+    expect(custom.signature.text).toBe("Designed by Example Studio");
   });
 
   it("migrates projects created before templates existed without changing their web-cover layout", () => {
@@ -69,14 +88,14 @@ describe("project data validation", () => {
     expect(validateProject(project)).toBe(true);
   });
 
-  it("creates the editorial collage with its own logo, signature, and technology defaults", () => {
+  it("creates the editorial collage with its own layout, signature, and technology defaults", () => {
     const project = createDefaultProject("کلاژ نمونه‌کار", "editorial-collage");
     const brand = createDefaultBrand();
     expect(project.templateId).toBe("editorial-collage");
     expect(project.back).toMatchObject({ x: 38, y: 0, width: 590 });
     expect(project.front).toMatchObject({ x: 430, y: 340, width: 610 });
     expect(brand.logoBoxes?.["editorial-collage"]).toEqual({ x: 690, y: 24, width: 340, height: 92 });
-    expect(brand.logoOpacities?.["editorial-collage"]).toBe(0.9);
+    expect(brand.logoOpacities?.["editorial-collage"]).toBe(1);
     expect(brand.signature.positions?.["editorial-collage"]).toEqual({ x: 50, y: 1298 });
     expect(brand.iconSizes?.["editorial-collage"]).toBe(48);
     expect(validateProject(project)).toBe(true);
@@ -114,7 +133,7 @@ describe("project data validation", () => {
     const archive = await buildProjectArchive(project, brand);
     const imported = await importProjectArchive(new File([archive], "collage.zip", { type: "application/zip" }));
     expect(imported.project.templateId).toBe("editorial-collage");
-    expect(imported.brand.logoOpacities?.["editorial-collage"]).toBe(0.9);
+    expect(imported.brand.logoOpacities?.["editorial-collage"]).toBe(1);
   });
 
   it("includes the latest rendered card preview in the project archive", async () => {

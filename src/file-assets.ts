@@ -1,19 +1,6 @@
 import { MAX_ASSET_BYTES, type AssetMeta } from "./model";
 import { validateImageDimensions } from "./geometry";
-import { loadAsset, saveAsset } from "./database";
-import { DEFAULT_WEBZAD_LOGO } from "./defaults";
-
-const defaultWebzadLogoUrl = "/brand/webzad-team-logo.png";
-
-export const ensureDefaultWebzadLogo = async () => {
-  if (await loadAsset(DEFAULT_WEBZAD_LOGO.id)) return;
-  const response = await fetch(defaultWebzadLogoUrl);
-  if (!response.ok) throw new Error("فایل لوگوی پیش‌فرض وبزاد پیدا نشد.");
-  const blob = await response.blob();
-  const details = await inspectImageBlob(blob, "image/png");
-  const meta: AssetMeta = { ...DEFAULT_WEBZAD_LOGO, ...details, size: blob.size };
-  await saveAsset(meta, blob);
-};
+import { saveAsset } from "./database";
 
 const MIME_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 

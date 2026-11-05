@@ -14,6 +14,10 @@ const hasFiniteFields = (value: Record<string, unknown>, fields: string[]) =>
 const within = (value: unknown, min: number, max: number) =>
   isFiniteNumber(value) && value >= min && value <= max;
 const isHexColor = (value: unknown) => typeof value === "string" && /^#[0-9a-f]{6}$/iu.test(value);
+const isSupportedSchemaVersion = (value: unknown) => {
+  const version = Number(value);
+  return Number.isInteger(version) && version >= 1 && version <= SCHEMA_VERSION;
+};
 
 type ArchiveAssetEntry = { id: string; path: string; name: string; mime: AssetMeta["mime"]; size: number };
 
@@ -32,7 +36,7 @@ const isArchiveAssetEntry = (value: unknown): value is ArchiveAssetEntry => {
 };
 
 const validateBrand = (value: unknown): value is BrandSettings => {
-  if (!isRecord(value) || ![1, 2, 3, 4, 5, 6, 7].includes(Number(value.schemaVersion))) return false;
+  if (!isRecord(value) || !isSupportedSchemaVersion(value.schemaVersion)) return false;
   if (
     !isHexColor(value.background) ||
     (value.backgrounds !== undefined && (!isRecord(value.backgrounds) || Object.entries(value.backgrounds).some(([templateId, color]) => !["web-cover", "instagram-feed", "editorial-collage", "device-showcase", "laptop-float", "flat-device-showcase"].includes(templateId) || !isHexColor(color)))) ||
@@ -157,7 +161,7 @@ export const importProjectArchive = async (file: File): Promise<ImportedArchive>
   const project = isRecord(manifest) ? migrateProject(manifest.project) : null;
   if (
     !isRecord(manifest) ||
-    ![1, 2, 3, 4, 5, 6, 7].includes(Number(manifest.schemaVersion)) ||
+    !isSupportedSchemaVersion(manifest.schemaVersion) ||
     !project ||
     !validateBrand(manifest.brand) ||
     !Array.isArray(manifest.assets) ||

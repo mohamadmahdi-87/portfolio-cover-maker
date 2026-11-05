@@ -80,7 +80,7 @@ export const TEMPLATE_DEFINITIONS: Record<CoverTemplateId, TemplateDefinition> =
   "editorial-collage": {
     id: "editorial-collage",
     title: "کلاژ نمونه‌کار",
-    subtitle: "دو تصویر بلند با چیدمان نامتقارن و تزئینات وبزاد",
+    subtitle: "دو تصویر بلند با چیدمان نامتقارن",
     width: 1080,
     height: 1350,
     layers: { back: { x: 38, y: 0, width: 590 }, front: { x: 430, y: 340, width: 610 } },

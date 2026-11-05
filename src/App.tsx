@@ -39,7 +39,6 @@ import {
   createDefaultLayer,
   createDefaultMobileLayer,
   createDefaultProject,
-  DEFAULT_WEBZAD_LOGO,
   migrateBrandSettings,
   IMPLEMENTATION_SUGGESTIONS,
   TEMPLATE_SUGGESTIONS,
@@ -57,11 +56,12 @@ import {
   saveBrand,
   saveProject,
 } from "./database";
-import { ensureDefaultWebzadLogo, inspectImageBlob, persistImageFile } from "./file-assets";
+import { inspectImageBlob, persistImageFile } from "./file-assets";
 import {
   deleteSqlProject,
   hydrateSqlAssets,
   loadSqlBootstrap,
+  sqlStorageEnabled,
   setSqlActiveProject,
   syncProjectToSql,
 } from "./sql-api";
@@ -96,11 +96,8 @@ type ConfirmationDialog = {
   onConfirm?: () => void | boolean | Promise<void | boolean>;
 };
 
-const migrateBrandLogo = (brand: BrandSettings | null | undefined): BrandSettings => {
-  const migrated = migrateBrandSettings(brand);
-  return migrated.logoDefaultApplied
-    ? migrated
-    : { ...migrated, logo: migrated.logo ?? { ...DEFAULT_WEBZAD_LOGO }, logoDefaultApplied: true };
+const migrateBrand = (brand: BrandSettings | null | undefined): BrandSettings => {
+  return migrateBrandSettings(brand);
 };
 
 const getLayer = (project: ProjectState, side: LayerSide): ImageLayer | null =>
@@ -360,9 +357,9 @@ function LauncherHome({
   return (
     <div className="launcher-shell min-h-screen" dir="rtl">
       <header className="launcher-header">
-        <div className="launcher-brand" aria-label="وبزاد استودیو">
-          <img src="/favicon-webzad.png" alt="" />
-          <span><b>WEBZAD STUDIO</b><small>فضای کار طراحی</small></span>
+        <div className="launcher-brand" aria-label="استودیو ساخت کاور">
+          <img src="/favicon.svg" alt="" />
+          <span><b>استودیو کاور</b><small>فضای کار طراحی</small></span>
         </div>
         <button className="button button-primary" type="button" onClick={() => onCreate()}>
           <Plus size={17} aria-hidden="true" /> پروژهٔ تازه
@@ -372,7 +369,7 @@ function LauncherHome({
       <main className="launcher-main">
         <section className="launcher-welcome" aria-labelledby="launcher-title">
           <div className="launcher-welcome-copy">
-            <span className="launcher-kicker"><Layers size={15} aria-hidden="true" /> WEBZAD COVER STUDIO</span>
+            <span className="launcher-kicker"><Layers size={15} aria-hidden="true" /> PORTFOLIO COVER MAKER</span>
             <h1 id="launcher-title">از آخرین کار ادامه بده،<br />یا از نو شروع کن.</h1>
             <p>پروژه‌های ذخیره‌شده را باز کن یا برای یک کاور تازه از تمپلیت آماده شروع کن.</p>
             <button className="button button-light" type="button" onClick={() => onCreate()}>
@@ -381,7 +378,7 @@ function LauncherHome({
           </div>
           <div className="launcher-welcome-art" aria-hidden="true">
             <div className="welcome-sheet welcome-sheet-back" />
-            <div className="welcome-sheet welcome-sheet-front"><span>WZ</span><i /><i /><i /></div>
+            <div className="welcome-sheet welcome-sheet-front"><span>01</span><i /><i /><i /></div>
             <span className="welcome-glow" />
           </div>
         </section>
@@ -464,7 +461,7 @@ function LauncherHome({
           </div>
         </section>
       </main>
-      <footer className="launcher-footer"><span>WEBZAD STUDIO</span><span>ذخیره‌سازی روی MySQL محلی و همین مرورگر</span></footer>
+      <footer className="launcher-footer"><span>سازندهٔ کاور نمونه‌کار</span><span>ذخیره‌سازی محلی در مرورگر؛ MySQL اختیاری است</span></footer>
     </div>
   );
 }
@@ -612,14 +609,13 @@ function App() {
     let cancelled = false;
     const initialize = async () => {
       try {
-        await ensureDefaultWebzadLogo();
         const [storedBrand, storedProjects, activeId] = await Promise.all([
           loadBrand(),
           listProjects(),
           loadActiveProjectId(),
         ]);
         const localProjects = storedProjects.sort((a, b) => b.updatedAt - a.updatedAt);
-        const localBrand = migrateBrandLogo(storedBrand?.brand);
+        const localBrand = migrateBrand(storedBrand?.brand);
         let initialProjects = localProjects;
         let initialBrand = localBrand;
         let activeProject = initialProjects.find((item) => item.id === activeId) ?? initialProjects[0] ?? createDefaultProject();
@@ -633,7 +629,7 @@ function App() {
             }
           } else {
             initialProjects = remote.projects.length ? remote.projects : localProjects;
-            initialBrand = migrateBrandLogo(remote.brand);
+            initialBrand = migrateBrand(remote.brand);
             activeProject = initialProjects.find((item) => item.id === remote.activeProjectId) ?? initialProjects[0] ?? createDefaultProject();
             if (remote.projects.length) await hydrateSqlAssets(initialProjects, initialBrand);
           }
@@ -678,8 +674,8 @@ function App() {
     const loadFonts = async () => {
       try {
         await Promise.all([
-          document.fonts.load('600 44px "Vazirmatn"', "وبزاد فارسی نیم‌فاصله"),
-          document.fonts.load("600 44px Inter", "Webzad Studio"),
+          document.fonts.load('600 44px "Vazirmatn"', "فارسی نیم‌فاصله"),
+          document.fonts.load("600 44px Inter", "Portfolio Cover"),
           document.fonts.ready,
         ]);
       } finally {
@@ -829,10 +825,12 @@ function App() {
       savedProjectFingerprints.current.set(project.id, projectFingerprint(snapshot));
       savedBrandFingerprint.current = JSON.stringify(brand);
       setSaveState("saved");
-      showNotice("success", "پروژه و تنظیمات برند در MySQL و حافظهٔ محلی ذخیره شد.");
+      showNotice("success", sqlStorageEnabled
+        ? "پروژه و تنظیمات برند در مرورگر و MySQL محلی ذخیره شد."
+        : "پروژه و تنظیمات برند در همین مرورگر ذخیره شد.");
     } catch {
       setSaveState("error");
-      showNotice("error", "ذخیره انجام نشد؛ اتصال MySQL و فضای IndexedDB را بررسی کنید.");
+      showNotice("error", "ذخیره انجام نشد؛ فضای ذخیره‌سازی مرورگر یا تنظیمات MySQL را بررسی کنید.");
     }
   };
 
@@ -987,13 +985,8 @@ function App() {
     });
   };
 
-  const resetBrand = async () => {
-    try {
-      await ensureDefaultWebzadLogo();
-      setBrand(createDefaultBrand());
-    } catch (error) {
-      showNotice("error", error instanceof Error ? error.message : "لوگوی پیش‌فرض بارگذاری نشد.");
-    }
+  const resetBrand = () => {
+    setBrand(createDefaultBrand());
   };
 
   const swapLayers = () => {
@@ -1073,7 +1066,7 @@ function App() {
           .trim()
           .replace(/[^\p{L}\p{N}-]+/gu, "-")
           .replace(/^-+|-+$/gu, "")
-          .slice(0, 80) || "webzad-cover";
+          .slice(0, 80) || "portfolio-cover";
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -1137,7 +1130,7 @@ function App() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
-      link.download = (project.name.replace(/[^\p{L}\p{N}-]+/gu, "-").slice(0, 80) || "webzad-project") + ".zip";
+      link.download = (project.name.replace(/[^\p{L}\p{N}-]+/gu, "-").slice(0, 80) || "portfolio-project") + ".zip";
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 1500);
       showNotice("success", "فایل پشتیبان ZIP ساخته شد.");
@@ -1150,13 +1143,7 @@ function App() {
     setIsImporting(true);
     try {
       const imported = await importProjectArchive(file);
-      const importedBrand = imported.brand.logoDefaultApplied
-        ? imported.brand
-        : {
-            ...imported.brand,
-            logo: imported.brand.logo ?? { ...DEFAULT_WEBZAD_LOGO },
-            logoDefaultApplied: true,
-          };
+      const importedBrand = migrateBrandSettings(imported.brand);
       savedProjectFingerprints.current.set(imported.project.id, projectFingerprint(imported.project));
       savedBrandFingerprint.current = JSON.stringify(importedBrand);
       setProject(imported.project);
@@ -1300,7 +1287,7 @@ function App() {
         <div className="brand-heading">
           <span className="brand-mark" aria-hidden="true"><Layers size={20} /></span>
           <div>
-            <p className="eyebrow">WEBZAD STUDIO</p>
+            <p className="eyebrow">PORTFOLIO COVER MAKER</p>
             <h1>سازندهٔ کاور نمونه‌کار</h1>
           </div>
         </div>
@@ -1308,7 +1295,7 @@ function App() {
           <button className="button button-secondary" type="button" onClick={() => setView("launcher")}>
             <FolderOpen size={16} aria-hidden="true" /> همهٔ پروژه‌ها
           </button>
-          <div className={"save-indicator " + saveState} title={saveState === "saved" ? "پروژه در MySQL محلی و IndexedDB ذخیره شده است." : undefined}>
+          <div className={"save-indicator " + saveState} title={saveState === "saved" ? "پروژه در حافظهٔ محلی مرورگر ذخیره شده است." : undefined}>
             {saveState === "saving" || saveState === "loading" ? <LoaderCircle size={15} className="spin" /> : saveState === "saved" ? <Check size={15} /> : saveState === "draft" ? <Save size={15} /> : <AlertTriangle size={15} />}
             <span>{saveState === "saving" ? "در حال ذخیره" : saveState === "loading" ? "آماده‌سازی" : saveState === "saved" ? "ذخیره شد" : saveState === "draft" ? "پیش‌نویس" : "ذخیره ناموفق"}</span>
           </div>
@@ -1420,7 +1407,7 @@ function App() {
           </SectionPanel>
 
           {project.templateId !== "flat-device-showcase" && <SectionPanel title="لوگوی برند" icon={<Palette size={17} />} onReset={resetBrand} resetLabel="بازنشانی تنظیمات برند">
-            <p className="field-hint">لوگوی تیم وبزاد به‌صورت پیش‌فرض استفاده می‌شود؛ در صورت نیاز می‌توانید آن را جایگزین یا حذف کنید.</p>
+            <p className="field-hint">لوگوی دلخواه خود را بارگذاری کنید؛ استفاده از لوگو اختیاری است.</p>
             <div className="layer-file-row">
               <UploadButton id="upload-logo" label={brand.logo ? "جایگزینی لوگو" : "بارگذاری لوگو"} onFile={(file) => void uploadLogo(file)} />
               {brand.logo && <button className="icon-button danger" type="button" aria-label="حذف لوگو" onClick={() => setBrand((current) => ({ ...current, logo: null }))}><Trash2 size={16} /></button>}
@@ -1606,7 +1593,7 @@ function App() {
         </section>
       </main>
       <footer className="app-footer">
-        <span>Webzad Cover Studio</span>
+        <span>سازندهٔ کاور نمونه‌کار</span>
         <span>پردازش تصویر و ذخیره‌سازی محلی در مرورگر</span>
       </footer>
       {noticeToast}

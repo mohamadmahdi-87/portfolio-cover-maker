@@ -51,7 +51,7 @@ export const fitText = (
   while (fontSize > minSize) {
     ctx.font = "600 " + fontSize + "px \"" + fontFamily + "\", \"" + (fontFamily === "Inter" ? "Vazirmatn" : "Inter") + "\", sans-serif";
     result = wrapWords(ctx, text, safeWidth);
-    if (!result.overflow && result.lines.length <= maxLines) break;
+    if (!result.overflow && result.lines.length === 1) break;
     fontSize -= 1;
   }
   ctx.font = "600 " + fontSize + "px \"" + fontFamily + "\", \"" + (fontFamily === "Inter" ? "Vazirmatn" : "Inter") + "\", sans-serif";

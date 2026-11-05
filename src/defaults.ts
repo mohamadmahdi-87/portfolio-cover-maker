@@ -11,15 +11,6 @@ export const DEFAULT_SHADOW = {
   color: "#555555",
 };
 
-export const DEFAULT_WEBZAD_LOGO = {
-  id: "webzad-team-logo-default-v1",
-  name: "لوگوی تیم وبزاد",
-  mime: "image/png" as const,
-  width: 595,
-  height: 121,
-  size: 6534,
-};
-
 export const createDefaultLayer = (kind: "front" | "back", templateId: CoverTemplateId = "web-cover"): ImageLayer => ({
   asset: null,
   visible: true,
@@ -54,8 +45,7 @@ export const createDefaultBrand = (): BrandSettings => ({
   fontFamily: "Vazirmatn",
   background: "#E4E4E4",
   backgrounds: { "device-showcase": "#f8f9f8", "laptop-float": "#d2d2d2", "flat-device-showcase": "#476fa7" },
-  logo: { ...DEFAULT_WEBZAD_LOGO },
-  logoDefaultApplied: true,
+  logo: null,
   logoVisible: true,
   logoBox: { ...getTemplateDefinition("web-cover").logoBox },
   logoBoxes: {
@@ -66,10 +56,10 @@ export const createDefaultBrand = (): BrandSettings => ({
     "laptop-float": { ...getTemplateDefinition("laptop-float").logoBox },
     "flat-device-showcase": { ...getTemplateDefinition("flat-device-showcase").logoBox },
   },
-  logoOpacity: 0.04,
-  logoOpacities: { "web-cover": 0.04, "instagram-feed": 0.04, "editorial-collage": 0.9, "device-showcase": 0.9, "laptop-float": 0.12, "flat-device-showcase": 0.9 },
+  logoOpacity: 1,
+  logoOpacities: { "web-cover": 1, "instagram-feed": 1, "editorial-collage": 1, "device-showcase": 1, "laptop-float": 1, "flat-device-showcase": 1 },
   signature: {
-    text: "Designed by Webzad",
+    text: "",
     x: 50,
     y: 766,
     fontSize: 27,
@@ -91,6 +81,22 @@ export const createDefaultBrand = (): BrandSettings => ({
 
 export const migrateBrandSettings = (brand: BrandSettings | null | undefined): BrandSettings => {
   if (!brand) return createDefaultBrand();
+  const brandWithoutLegacyMarker = Object.fromEntries(
+    Object.entries(brand).filter(([key]) => key !== "logoDefaultApplied"),
+  ) as BrandSettings;
+  const logo = brand.logo?.id === "webzad-team-logo-default-v1" ? null : brand.logo;
+  const signatureText = brand.signature.text === "Designed by Webzad" ? "" : brand.signature.text;
+  const removedBundledLogo = brand.logo?.id === "webzad-team-logo-default-v1";
+  const legacyDefaultApplied = (brand as BrandSettings & { logoDefaultApplied?: boolean }).logoDefaultApplied === true;
+  const resetLegacyLogoOpacity = removedBundledLogo || (brand.logo === null && legacyDefaultApplied);
+  const logoOpacity = resetLegacyLogoOpacity && brand.logoOpacity === 0.04 ? 1 : brand.logoOpacity;
+  const oldLogoOpacities = { "web-cover": 0.04, "instagram-feed": 0.04, "editorial-collage": 0.9, "device-showcase": 0.9, "laptop-float": 0.12, "flat-device-showcase": 0.9 };
+  const logoOpacities = Object.fromEntries(
+    Object.entries(brand.logoOpacities ?? {}).map(([templateId, opacity]) => [
+      templateId,
+      resetLegacyLogoOpacity && opacity === oldLogoOpacities[templateId as keyof typeof oldLogoOpacities] ? 1 : opacity,
+    ]),
+  ) as BrandSettings["logoOpacities"];
   const web = getTemplateDefinition("web-cover");
   const social = getTemplateDefinition("instagram-feed");
   const collage = getTemplateDefinition("editorial-collage");
@@ -98,7 +104,9 @@ export const migrateBrandSettings = (brand: BrandSettings | null | undefined): B
   const laptopFloat = getTemplateDefinition("laptop-float");
   const flatDeviceShowcase = getTemplateDefinition("flat-device-showcase");
   return {
-    ...brand,
+    ...brandWithoutLegacyMarker,
+    logo,
+    logoOpacity,
     schemaVersion: SCHEMA_VERSION,
     iconSizes: {
       ...brand.iconSizes,
@@ -128,16 +136,17 @@ export const migrateBrandSettings = (brand: BrandSettings | null | undefined): B
       "flat-device-showcase": brand.logoBoxes?.["flat-device-showcase"] ?? { ...flatDeviceShowcase.logoBox },
     },
     logoOpacities: {
-      ...brand.logoOpacities,
-      "web-cover": brand.logoOpacities?.["web-cover"] ?? brand.logoOpacity,
-      "instagram-feed": brand.logoOpacities?.["instagram-feed"] ?? brand.logoOpacity,
-      "editorial-collage": brand.logoOpacities?.["editorial-collage"] ?? 0.9,
-      "device-showcase": brand.logoOpacities?.["device-showcase"] ?? 0.9,
-      "laptop-float": brand.logoOpacities?.["laptop-float"] ?? 0.12,
-      "flat-device-showcase": brand.logoOpacities?.["flat-device-showcase"] ?? 0.9,
+      ...logoOpacities,
+      "web-cover": logoOpacities?.["web-cover"] ?? logoOpacity,
+      "instagram-feed": logoOpacities?.["instagram-feed"] ?? logoOpacity,
+      "editorial-collage": logoOpacities?.["editorial-collage"] ?? (resetLegacyLogoOpacity ? 1 : 0.9),
+      "device-showcase": logoOpacities?.["device-showcase"] ?? (resetLegacyLogoOpacity ? 1 : 0.9),
+      "laptop-float": logoOpacities?.["laptop-float"] ?? (resetLegacyLogoOpacity ? 1 : 0.12),
+      "flat-device-showcase": logoOpacities?.["flat-device-showcase"] ?? (resetLegacyLogoOpacity ? 1 : 0.9),
     },
     signature: {
       ...brand.signature,
+      text: signatureText,
       positions: {
         ...brand.signature.positions,
         "web-cover": brand.signature.positions?.["web-cover"] ?? { x: brand.signature.x, y: brand.signature.y },
